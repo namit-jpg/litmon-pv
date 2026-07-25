@@ -18,6 +18,7 @@ from typing import Any
 import httpx
 
 from app.core.config import get_settings
+from app.services.pubmed.errors import PubMedError
 
 
 @dataclass
@@ -87,18 +88,57 @@ class PubMedClient:
 
     async def _get(self, path: str, params: dict[str, Any]) -> httpx.Response:
         assert self._client is not None
+        if not (self.settings.ncbi_email or "").strip() or self.settings.ncbi_email in (
+            "dev@example.com",
+            "your.email@company.com",
+        ):
+            # Still allow placeholder for offline demos, but surface a clear warning path
+            # when live calls fail — NCBI requires a real contact email.
+            pass
         await self._limiter.wait()
         url = f"{self.settings.ncbi_base_url.rstrip('/')}/{path}"
         merged = {**self._common_params(), **params}
+        last_resp: httpx.Response | None = None
+        last_exc: Exception | None = None
         for attempt in range(4):
-            resp = await self._client.get(url, params=merged)
+            try:
+                resp = await self._client.get(url, params=merged)
+            except httpx.TimeoutException as exc:
+                last_exc = exc
+                await asyncio.sleep(2**attempt)
+                continue
+            except httpx.RequestError as exc:
+                last_exc = exc
+                await asyncio.sleep(2**attempt)
+                continue
+            last_resp = resp
             if resp.status_code in (429, 500, 502, 503, 504):
                 await asyncio.sleep(2**attempt)
                 continue
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                raise PubMedError(
+                    f"NCBI {path} HTTP {resp.status_code}: {resp.text[:300]}",
+                    user_message=_friendly_http_error(resp.status_code, path),
+                    status_code=resp.status_code,
+                    retryable=resp.status_code in (408, 429) or resp.status_code >= 500,
+                )
             return resp
-        resp.raise_for_status()
-        return resp
+        if last_resp is not None:
+            raise PubMedError(
+                f"NCBI {path} failed after retries: HTTP {last_resp.status_code}",
+                user_message=_friendly_http_error(last_resp.status_code, path)
+                + " Retries exhausted — try again later or add NCBI_API_KEY.",
+                status_code=last_resp.status_code,
+                retryable=True,
+            )
+        raise PubMedError(
+            f"NCBI {path} network error: {last_exc}",
+            user_message=(
+                "Could not reach NCBI E-utilities (network/timeout). "
+                "Check connectivity and NCBI_EMAIL, then retry."
+            ),
+            retryable=True,
+        )
 
     async def esearch(
         self,
@@ -127,8 +167,27 @@ class PubMedClient:
                 "sort": "pub_date",
             },
         )
-        data = resp.json()
+        try:
+            data = resp.json()
+        except Exception as exc:
+            raise PubMedError(
+                f"ESearch invalid JSON: {exc}",
+                user_message="PubMed ESearch returned non-JSON. Retry or check NCBI status.",
+                retryable=True,
+            ) from exc
+        if "esearchresult" not in data and "error" in data:
+            raise PubMedError(
+                f"ESearch error: {data.get('error')}",
+                user_message=f"PubMed rejected the query: {data.get('error')}",
+                retryable=False,
+            )
         result = data.get("esearchresult", {})
+        if result.get("ERROR"):
+            raise PubMedError(
+                f"ESearch ERROR: {result.get('ERROR')}",
+                user_message=f"PubMed ESearch error: {result.get('ERROR')}",
+                retryable=False,
+            )
         pmids = result.get("idlist") or []
         count = int(result.get("count") or len(pmids))
         raw_hash = hashlib.sha256(resp.content).hexdigest()
@@ -254,6 +313,22 @@ def parse_efetch_xml(xml_text: str) -> list[PubMedArticleDTO]:
             )
         )
     return out
+
+
+def _friendly_http_error(status: int, path: str) -> str:
+    op = "ESearch" if "esearch" in path else "EFetch" if "efetch" in path else "NCBI"
+    if status == 429:
+        return (
+            f"{op} rate-limited (HTTP 429). Add NCBI_API_KEY for higher limits "
+            "or wait and retry."
+        )
+    if status in (401, 403):
+        return f"{op} unauthorized (HTTP {status}). Check NCBI_API_KEY if set."
+    if status == 400:
+        return f"{op} bad request (HTTP 400). Check the search string syntax."
+    if status >= 500:
+        return f"{op} NCBI server error (HTTP {status}). Retry later."
+    return f"{op} failed (HTTP {status}). See run error details and retry if needed."
 
 
 _MONTHS = {

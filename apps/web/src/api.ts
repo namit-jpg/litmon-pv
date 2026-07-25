@@ -6,6 +6,27 @@ export function setToken(t: string | null) {
   token = t;
 }
 
+/** Parse FastAPI error bodies into a short operator-facing message. */
+export function formatApiError(raw: string, fallback = "Request failed"): string {
+  if (!raw) return fallback;
+  try {
+    const j = JSON.parse(raw);
+    const d = j?.detail;
+    if (typeof d === "string") return d;
+    if (d && typeof d === "object" && d.message) {
+      const retry = d.retryable ? " (retryable)" : "";
+      return `${d.message}${retry}`;
+    }
+    if (Array.isArray(d)) {
+      return d.map((x) => x.msg || JSON.stringify(x)).join("; ");
+    }
+    if (j?.message) return String(j.message);
+  } catch {
+    /* not JSON */
+  }
+  return raw.length > 400 ? raw.slice(0, 400) + "…" : raw;
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers || {});
   if (token) headers.set("Authorization", `Bearer ${token}`);
@@ -15,7 +36,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, { ...init, headers });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(text || res.statusText);
+    throw new Error(formatApiError(text, res.statusText));
   }
   if (res.status === 204) return undefined as T;
   const ct = res.headers.get("content-type") || "";
@@ -111,6 +132,50 @@ export type EvalResult = {
   details: Record<string, unknown>[];
 };
 
+export type SearchRunDetail = {
+  id: number;
+  search_string_id: number;
+  status: string;
+  query_snapshot: string;
+  date_from?: string;
+  date_to?: string;
+  hit_count: number;
+  new_article_count: number;
+  rehit_count: number;
+  error_message?: string;
+  triggered_by?: string;
+  started_at?: string;
+  completed_at?: string;
+  created_at: string;
+  product_id?: number;
+  product_name?: string;
+  articles: {
+    id: number;
+    pmid: string;
+    title: string;
+    status: string;
+    is_first_seen: boolean;
+    composite?: number;
+    queue?: string;
+  }[];
+};
+
+export type ThresholdsConfig = {
+  prompt_version: string;
+  ruleset_version: string;
+  threshold_version: string;
+  bands: Record<string, unknown>[];
+  auto_clear_qc_sample_rate: number;
+  llm_mock: boolean;
+  llm_model: string;
+  llm_base_url?: string;
+  llm_api_key_configured?: boolean;
+  llm_mode?: string;
+  fail_open_on_llm_error?: boolean;
+  ncbi_email_configured?: boolean;
+  ncbi_api_key_configured?: boolean;
+};
+
 function qs(params: Record<string, string | undefined>) {
   const u = new URLSearchParams();
   Object.entries(params).forEach(([k, v]) => {
@@ -180,10 +245,26 @@ export const api = {
       { id: number; product_id: number; query_text: string; version: number }[]
     >("/api/search-strings"),
   searchRuns: () => request<Record<string, unknown>[]>("/api/search-runs"),
-  runSearch: (search_string_id: number, max_fetch = 20) =>
-    request("/api/search-runs", {
+  searchRun: (id: number) =>
+    request<SearchRunDetail>(`/api/search-runs/${id}`),
+  runSearch: (
+    search_string_id: number,
+    opts?: { max_fetch?: number; days?: number; date_from?: string; date_to?: string }
+  ) =>
+    request<Record<string, unknown>>("/api/search-runs", {
       method: "POST",
-      body: JSON.stringify({ search_string_id, max_fetch }),
+      body: JSON.stringify({
+        search_string_id,
+        max_fetch: opts?.max_fetch ?? 20,
+        days: opts?.days,
+        date_from: opts?.date_from,
+        date_to: opts?.date_to,
+      }),
+    }),
+  retrySearchRun: (id: number, max_fetch = 30) =>
+    request<SearchRunDetail>(`/api/search-runs/${id}/retry`, {
+      method: "POST",
+      body: JSON.stringify({ max_fetch }),
     }),
   seedDemo: () =>
     request<{ seeded: number }>("/api/demo/seed-articles", { method: "POST" }),
@@ -213,7 +294,7 @@ export const api = {
     `${API_BASE}/api/exports/${id}?format=${format}`,
   evaluation: () =>
     request<EvalResult>("/api/evaluation/run", { method: "POST" }),
-  thresholds: () => request<Record<string, unknown>>("/api/config/thresholds"),
+  thresholds: () => request<ThresholdsConfig>("/api/config/thresholds"),
   audit: (opts?: { entity_type?: string; entity_id?: string; action?: string }) =>
     request<Record<string, unknown>[]>(
       `/api/audit${qs({

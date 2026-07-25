@@ -19,6 +19,9 @@ class MetricsStore:
     score_count: int = 0
     score_latency_ms_sum: float = 0.0
     score_errors: int = 0
+    score_llm_fallbacks: int = 0
+    score_llm_timeouts: int = 0
+    score_llm_retries: int = 0
     search_runs: int = 0
     search_failures: int = 0
     search_new_articles: int = 0
@@ -50,12 +53,26 @@ class MetricsStore:
             if status >= 400:
                 self.request_errors += 1
 
-    def record_score(self, duration_ms: float, ok: bool = True) -> None:
+    def record_score(
+        self,
+        duration_ms: float,
+        ok: bool = True,
+        *,
+        used_fallback: bool = False,
+        llm_timeout: bool = False,
+        llm_retry: int = 0,
+    ) -> None:
         with self._lock:
             self.score_count += 1
             self.score_latency_ms_sum += duration_ms
             if not ok:
                 self.score_errors += 1
+            if used_fallback:
+                self.score_llm_fallbacks += 1
+            if llm_timeout:
+                self.score_llm_timeouts += 1
+            if llm_retry:
+                self.score_llm_retries += llm_retry
 
     def record_search(self, *, ok: bool, new_articles: int = 0) -> None:
         with self._lock:
@@ -90,6 +107,9 @@ class MetricsStore:
                     "total": self.score_count,
                     "errors": self.score_errors,
                     "avg_latency_ms": round(score_avg, 2),
+                    "llm_fallbacks": self.score_llm_fallbacks,
+                    "llm_timeouts": self.score_llm_timeouts,
+                    "llm_retries": self.score_llm_retries,
                 },
                 "search": {
                     "runs": self.search_runs,

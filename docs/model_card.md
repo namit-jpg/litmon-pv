@@ -35,7 +35,19 @@ Rank and explain biomedical abstracts for a monitored product. Route to Auto-Cle
 |------|------|----------|
 | Mock / heuristic | `LLM_MOCK=true` or no API key | `heuristic-mock-v1` |
 | LLM structured JSON | `LLM_MOCK=false` + key | configured `LLM_MODEL` |
-| Fallback | LLM error | `heuristic-fallback-v1` |
+| Fallback (fail-open) | LLM timeout / HTTP / parse error after retries | `heuristic-fallback-v1` |
+
+### Fail-open policy
+
+Articles are **never dropped** because the LLM is down. On transport timeout,
+5xx/429 (after limited retries), 4xx, or invalid JSON:
+
+1. Score with the deterministic heuristic (same as mock, tends to over-flag).  
+2. Set `is_mock=true`, `model_id=heuristic-fallback-v1`.  
+3. Emit audit event `llm_fallback_heuristic` on the article.  
+4. Increment Ops metrics: `scoring.llm_fallbacks`, `scoring.llm_timeouts`, `scoring.llm_retries`.
+
+Admin → **Runtime config** shows `LLM_MOCK` / live mode (env-driven; restart API to change).
 
 ## Thresholds (starting — calibrate in pilot)
 

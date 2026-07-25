@@ -35,6 +35,19 @@ No OAuth. API key is a query parameter, not a bearer token.
 
 Client implements spacing + exponential backoff on 429/5xx.
 
+## Date windows
+
+`POST /api/search-runs` accepts either explicit `date_from` / `date_to` or convenience
+`days` (7 / 14 / 30 presets in Admin). Window is applied as PubMed `[PDAT]`.
+
+## Errors & retry
+
+Transport/HTTP failures raise `PubMedError` with a short `user_message` and `retryable`
+flag. Failed runs remain in the DB (`status=failed`, `error_message` set). Operators can
+`POST /api/search-runs/{id}/retry` (same search string + date window → new SearchRun row)
+from Admin or the search-run detail page. Common fixes: real `NCBI_EMAIL`, optional
+`NCBI_API_KEY` for 429s.
+
 ## Audit
 
 Every search run stores:

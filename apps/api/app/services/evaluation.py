@@ -45,7 +45,7 @@ async def evaluate_gold_set(
     details: list[dict[str, Any]] = []
 
     for item in gold:
-        out, model_id, is_mock = await score_article(
+        out, model_id, is_mock, _meta = await score_article(
             title=item["title"],
             abstract=item.get("abstract"),
             product_names=product_names,

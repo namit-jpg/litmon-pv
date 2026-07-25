@@ -102,6 +102,14 @@ export default function OpsPage() {
           <span>Score avg ms</span>
           <strong>{String(scoring.avg_latency_ms ?? "—")}</strong>
         </div>
+        <div className="stat warn">
+          <span>LLM fallbacks</span>
+          <strong>{String(scoring.llm_fallbacks ?? 0)}</strong>
+        </div>
+        <div className="stat">
+          <span>LLM timeouts</span>
+          <strong>{String(scoring.llm_timeouts ?? 0)}</strong>
+        </div>
         <div className="stat">
           <span>Search runs</span>
           <strong>{String(search.runs ?? 0)}</strong>

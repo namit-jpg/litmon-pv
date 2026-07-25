@@ -7,6 +7,7 @@ import AdminPage from "./pages/AdminPage";
 import ArchivePage from "./pages/ArchivePage";
 import AuditPage from "./pages/AuditPage";
 import OpsPage from "./pages/OpsPage";
+import SearchRunPage from "./pages/SearchRunPage";
 
 function Shell({ children }: { children: React.ReactNode }) {
   const { user, logout } = useAuth();
@@ -100,6 +101,14 @@ export default function App() {
         element={
           <Private>
             <AdminPage />
+          </Private>
+        }
+      />
+      <Route
+        path="/search-runs/:id"
+        element={
+          <Private>
+            <SearchRunPage />
           </Private>
         }
       />

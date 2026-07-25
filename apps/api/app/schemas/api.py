@@ -92,10 +92,34 @@ class SearchRunOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class SearchRunArticleItem(BaseModel):
+    id: int
+    pmid: str
+    title: str
+    status: ArticleStatus
+    is_first_seen: bool
+    composite: Optional[float] = None
+    queue: Optional[QueueType] = None
+
+
+class SearchRunDetail(SearchRunOut):
+    """Search run with article appearances for the detail page."""
+
+    articles: list[SearchRunArticleItem] = Field(default_factory=list)
+    product_id: Optional[int] = None
+    product_name: Optional[str] = None
+
+
 class RunSearchIn(BaseModel):
     search_string_id: int
     date_from: Optional[date] = None
     date_to: Optional[date] = None
+    max_fetch: int = Field(default=30, ge=1, le=200)
+    # Convenience: days window ending today (overrides date_from if set)
+    days: Optional[int] = Field(default=None, ge=1, le=365)
+
+
+class RetrySearchRunIn(BaseModel):
     max_fetch: int = Field(default=30, ge=1, le=200)
 
 
@@ -260,3 +284,9 @@ class ThresholdsOut(BaseModel):
     auto_clear_qc_sample_rate: float
     llm_mock: bool
     llm_model: str
+    llm_base_url: str = ""
+    llm_api_key_configured: bool = False
+    llm_mode: str = "mock"  # mock | live | mock_no_key
+    fail_open_on_llm_error: bool = True
+    ncbi_email_configured: bool = False
+    ncbi_api_key_configured: bool = False

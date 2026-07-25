@@ -70,12 +70,15 @@ Default admin: `admin@litmon.local` / `admin123`
 
 ## Suggested next work (if user says “continue”)
 
-- Wire production LLM defaults and prompt evaluation harness improvements  
-- Multi-product admin UX  
-- Alembic migrations instead of `create_all` only  
-- Playwright E2E for login → review → export  
-- Postgres-first docker compose full stack  
-- Phase 2 validation checklist document  
+P0 (real-data) largely done in 0.2.1. Remaining backlog:
+
+- Multi-product admin UX (create product, synonyms, search strings)  
+- Queue filters (assignee, product, overdue, date range); bulk claim  
+- Article keyboard shortcuts  
+- Expand gold labels + evaluation export; threshold calibration notes  
+- Playwright E2E: login → seed → review ICSR → export  
+- Parallel-run export auto-compare on manual CSV re-upload  
+- docker-compose full stack + production pilot README (JWT, NCBI, backup)  
 
 ## Architecture one-liner
 

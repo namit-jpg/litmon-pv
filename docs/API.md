@@ -33,7 +33,9 @@ Rate limit: 10 login attempts / 5 minutes per IP+email.
 | GET | `/api/search-strings` | any | Versioned PubMed queries |
 | POST | `/api/search-strings` | pv_lead, admin | Create new active search string |
 | GET | `/api/search-runs` | any | Recent PubMed search runs |
-| POST | `/api/search-runs` | reviewer+ | Live ESearch→EFetch→score |
+| GET | `/api/search-runs/{id}` | any | Search-run detail + article appearances |
+| POST | `/api/search-runs` | reviewer+ | Live ESearch→EFetch→score (`days` 7/14/30 or `date_from`/`date_to`) |
+| POST | `/api/search-runs/{id}/retry` | reviewer+ | Re-run same string + date window (new SearchRun row) |
 | POST | `/api/demo/seed-articles` | pv_lead, admin | Offline demo articles |
 
 ---
@@ -100,7 +102,7 @@ Include explicit ICSR checklist booleans when confirming cases.
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/api/evaluation/run` | Gold-label sensitivity/specificity |
-| GET | `/api/config/thresholds` | Bands, versions, QC rate |
+| GET | `/api/config/thresholds` | Bands, versions, QC rate, LLM mock/live mode, NCBI config flags |
 
 ---
 

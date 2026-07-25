@@ -23,6 +23,7 @@ from app.models.entities import ArticleStatus, QueueType, SearchRunStatus
 from app.services.ai.scorer import score_article
 from app.services.audit import log_event
 from app.services.pubmed.client import PubMedClient
+from app.services.pubmed.errors import PubMedError
 from app.services.triage.engine import route_screening
 
 
@@ -174,8 +175,14 @@ async def run_search(
             metrics.record_search(ok=True, new_articles=new_count)
             return run
     except Exception as exc:
+        if isinstance(exc, PubMedError):
+            err_text = exc.user_message
+            retryable = exc.retryable
+        else:
+            err_text = str(exc)
+            retryable = True
         run.status = SearchRunStatus.FAILED
-        run.error_message = str(exc)
+        run.error_message = err_text
         run.completed_at = datetime.now(timezone.utc)
         log_event(
             db,
@@ -183,14 +190,59 @@ async def run_search(
             action="search_run_failed",
             entity_type="search_run",
             entity_id=run.id,
-            payload={"error": str(exc)},
+            payload={
+                "error": err_text,
+                "error_type": type(exc).__name__,
+                "retryable": retryable,
+            },
         )
         db.commit()
         db.refresh(run)
         from app.core.metrics import metrics
 
         metrics.record_search(ok=False)
-        raise
+        # Attach for API layer; still raise so callers can surface HTTP errors
+        if isinstance(exc, PubMedError):
+            raise
+        raise PubMedError(
+            str(exc),
+            user_message=f"PubMed search failed: {exc}",
+            retryable=True,
+        ) from exc
+
+
+async def retry_search_run(
+    db: Session,
+    search_run_id: int,
+    *,
+    triggered_by: str = "system",
+    max_fetch: int = 50,
+) -> SearchRun:
+    """Re-run a failed (or any) SearchRun with the same string and date window."""
+    prior = db.get(SearchRun, search_run_id)
+    if not prior:
+        raise ValueError("Search run not found")
+    if prior.status == SearchRunStatus.RUNNING:
+        raise ValueError("Search run is still running")
+    new_run = await run_search(
+        db,
+        prior.search_string_id,
+        date_from=prior.date_from,
+        date_to=prior.date_to,
+        triggered_by=triggered_by,
+        max_fetch=max_fetch,
+    )
+    log_event(
+        db,
+        actor=triggered_by,
+        action="search_run_retried",
+        entity_type="search_run",
+        entity_id=new_run.id,
+        payload={"from_run_id": prior.id, "prior_status": prior.status.value},
+    )
+    db.commit()
+    db.refresh(new_run)
+    return new_run
 
 
 async def score_and_route_article(
@@ -207,14 +259,20 @@ async def score_and_route_article(
     names = names or product_name_list(product)
     t0 = time.perf_counter()
     try:
-        output, model_id, is_mock = await score_article(
+        output, model_id, is_mock, meta = await score_article(
             title=article.title,
             abstract=article.abstract,
             product_names=names,
             mesh_terms=list(article.mesh_terms or []),
             journal=article.journal,
         )
-        metrics.record_score((time.perf_counter() - t0) * 1000, ok=True)
+        metrics.record_score(
+            (time.perf_counter() - t0) * 1000,
+            ok=True,
+            used_fallback=bool(meta.get("llm_fallback")),
+            llm_timeout=bool(meta.get("llm_timeout")),
+            llm_retry=int(meta.get("llm_retries") or 0),
+        )
     except Exception:
         metrics.record_score((time.perf_counter() - t0) * 1000, ok=False)
         raise
@@ -237,6 +295,21 @@ async def score_and_route_article(
     )
     db.add(screening)
     db.flush()
+    if meta.get("llm_fallback"):
+        log_event(
+            db,
+            actor="system",
+            action="llm_fallback_heuristic",
+            entity_type="article",
+            entity_id=article.id,
+            payload={
+                "model_id": model_id,
+                "error": meta.get("error"),
+                "llm_timeout": meta.get("llm_timeout"),
+                "llm_retries": meta.get("llm_retries"),
+                "fail_open": True,
+            },
+        )
 
     decision = route_screening(output)
     queue = decision.queue
@@ -286,6 +359,7 @@ async def score_and_route_article(
             "band": decision.band,
             "model_id": model_id,
             "is_mock": is_mock,
+            "llm_fallback": bool(meta.get("llm_fallback")),
         },
     )
     return screening

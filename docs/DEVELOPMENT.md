@@ -45,6 +45,28 @@ litmon-pv/
 - PubMed only via `app/services/pubmed/client.py` (no scraping).  
 - Jobs via `enqueue_job` (thread-safe for sync routes).
 
+## Database migrations (Alembic)
+
+Schema is managed with Alembic under `apps/api/alembic/`. On API startup,
+`run_migrations()` upgrades to head (or stamps legacy `create_all` DBs).
+
+```bash
+cd apps/api
+source .venv/bin/activate
+export PYTHONPATH="$(pwd)"
+
+# Apply migrations
+alembic upgrade head
+
+# After changing models/entities.py
+alembic revision --autogenerate -m "describe_change"
+# Review the generated file, then:
+alembic upgrade head
+```
+
+Prefer migrations over relying on `create_all` alone so schema stays consistent
+across laptops. `create_all` remains a last-resort fallback if Alembic fails.
+
 ## Frontend conventions
 
 - All HTTP via `src/api.ts`.  
@@ -98,4 +120,4 @@ Open PRs into `main`. Keep commits focused.
 
 ## Version stamp
 
-API reports `version` in `/health` (currently `0.2.0`). Bump when releasing meaningful pilot milestones; note in [CHANGELOG.md](CHANGELOG.md).
+API reports `version` in `/health` (currently `0.2.1`). Bump when releasing meaningful pilot milestones; note in [CHANGELOG.md](CHANGELOG.md).

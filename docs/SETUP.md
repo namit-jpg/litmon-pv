@@ -142,6 +142,18 @@ export PYTHONPATH="$(pwd)"  # or $env:PYTHONPATH on Windows
 python -m pytest tests -q
 ```
 
+## 7b. Schema migrations
+
+API startup runs Alembic (`apps/api/alembic`). Manual apply:
+
+```bash
+cd apps/api
+export PYTHONPATH="$(pwd)"
+alembic upgrade head
+```
+
+After model changes: `alembic revision --autogenerate -m "…"` then upgrade.
+
 ---
 
 ## 8. Optional Postgres

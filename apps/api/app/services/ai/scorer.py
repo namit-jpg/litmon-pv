@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
+import time
 from typing import Any
 
 import httpx
@@ -16,12 +18,52 @@ from app.services.ai.schemas import (
     ScreeningOutput,
 )
 
+logger = logging.getLogger("litmon.scorer")
+
 PROMPT_SYSTEM = """You are a pharmacovigilance literature screening assistant.
 Score biomedical abstracts for product relevance, adverse-event relevance, and ICSR
 minimum criteria (identifiable patient, suspect drug, adverse event, identifiable reporter).
 Return ONLY valid JSON matching the schema. Prefer over-flagging possible cases.
 Include short evidence quotes in reason tags and icsr_precheck.evidence fields.
 Never invent PMIDs or citations not present in the input."""
+
+PROMPT_USER_TEMPLATE_KEYS = (
+    "title",
+    "abstract",
+    "journal",
+    "mesh_terms",
+    "monitored_products",
+    "schema",
+)
+
+# Default HTTP timeout for LLM calls (seconds)
+LLM_TIMEOUT_SECONDS = 90.0
+LLM_MAX_RETRIES = 2
+
+
+def build_user_payload(
+    *,
+    title: str,
+    abstract: str | None,
+    product_names: list[str],
+    mesh_terms: list[str] | None = None,
+    journal: str | None = None,
+) -> dict[str, Any]:
+    """Structured user message body sent to the LLM (unit-testable)."""
+    return {
+        "title": title,
+        "abstract": abstract,
+        "journal": journal,
+        "mesh_terms": mesh_terms or [],
+        "monitored_products": product_names,
+        "schema": ScreeningOutput.model_json_schema(),
+    }
+
+
+def parse_llm_screening_json(content: str) -> ScreeningOutput:
+    """Parse and validate model JSON into ScreeningOutput (unit-testable)."""
+    parsed = json.loads(content)
+    return ScreeningOutput.model_validate(parsed)
 
 
 def _product_dictionary_boost(
@@ -168,6 +210,21 @@ def _heuristic_screen(
     )
 
 
+def _apply_dictionary_boost(
+    out: ScreeningOutput,
+    title: str,
+    abstract: str | None,
+    product_names: list[str],
+) -> ScreeningOutput:
+    boost, boost_tags = _product_dictionary_boost(
+        f"{title}\n{abstract or ''}", product_names
+    )
+    if boost > out.product_match:
+        out.product_match = boost
+        out.reason_tags = list(out.reason_tags) + boost_tags
+    return out
+
+
 async def score_article(
     *,
     title: str,
@@ -175,58 +232,101 @@ async def score_article(
     product_names: list[str],
     mesh_terms: list[str] | None = None,
     journal: str | None = None,
-) -> tuple[ScreeningOutput, str, bool]:
-    """Return (output, model_id, is_mock)."""
-    settings = get_settings()
-    if settings.llm_mock or not settings.llm_api_key:
-        out = _heuristic_screen(title, abstract, product_names, mesh_terms)
-        # Dictionary boost can lift product_match even on mock path
-        return out, "heuristic-mock-v1", True
+) -> tuple[ScreeningOutput, str, bool, dict[str, Any]]:
+    """Return (output, model_id, is_mock, meta).
 
-    payload_user = {
-        "title": title,
-        "abstract": abstract,
-        "journal": journal,
-        "mesh_terms": mesh_terms or [],
-        "monitored_products": product_names,
-        "schema": ScreeningOutput.model_json_schema(),
+    Fail-open policy: any LLM transport/parse error falls back to the heuristic
+    scorer with ``model_id=heuristic-fallback-v1`` and ``meta.llm_fallback=True``
+    so articles are never dropped for model outages.
+    """
+    settings = get_settings()
+    meta: dict[str, Any] = {
+        "llm_fallback": False,
+        "llm_timeout": False,
+        "llm_retries": 0,
+        "error": None,
     }
 
-    try:
-        async with httpx.AsyncClient(timeout=90.0) as client:
-            resp = await client.post(
-                f"{settings.llm_base_url.rstrip('/')}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {settings.llm_api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": settings.llm_model,
-                    "temperature": 0.1,
-                    "response_format": {"type": "json_object"},
-                    "messages": [
-                        {"role": "system", "content": PROMPT_SYSTEM},
-                        {
-                            "role": "user",
-                            "content": json.dumps(payload_user),
-                        },
-                    ],
-                },
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            content = data["choices"][0]["message"]["content"]
-            parsed = json.loads(content)
-            out = ScreeningOutput.model_validate(parsed)
-            # Ensure dictionary boost cannot be under-scored away
-            boost, boost_tags = _product_dictionary_boost(
-                f"{title}\n{abstract or ''}", product_names
-            )
-            if boost > out.product_match:
-                out.product_match = boost
-                out.reason_tags = list(out.reason_tags) + boost_tags
-            return out, settings.llm_model, False
-    except Exception:
-        # Fail safe: heuristic over-flags rather than dropping articles
+    if settings.llm_mock or not settings.llm_api_key:
         out = _heuristic_screen(title, abstract, product_names, mesh_terms)
-        return out, "heuristic-fallback-v1", True
+        return out, "heuristic-mock-v1", True, meta
+
+    payload_user = build_user_payload(
+        title=title,
+        abstract=abstract,
+        product_names=product_names,
+        mesh_terms=mesh_terms,
+        journal=journal,
+    )
+
+    last_error: str | None = None
+    timed_out = False
+    retries_used = 0
+
+    for attempt in range(LLM_MAX_RETRIES + 1):
+        try:
+            t0 = time.perf_counter()
+            async with httpx.AsyncClient(timeout=LLM_TIMEOUT_SECONDS) as client:
+                resp = await client.post(
+                    f"{settings.llm_base_url.rstrip('/')}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {settings.llm_api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": settings.llm_model,
+                        "temperature": 0.1,
+                        "response_format": {"type": "json_object"},
+                        "messages": [
+                            {"role": "system", "content": PROMPT_SYSTEM},
+                            {
+                                "role": "user",
+                                "content": json.dumps(payload_user),
+                            },
+                        ],
+                    },
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                content = data["choices"][0]["message"]["content"]
+                out = parse_llm_screening_json(content)
+                out = _apply_dictionary_boost(out, title, abstract, product_names)
+                meta["llm_retries"] = retries_used
+                meta["latency_ms"] = round((time.perf_counter() - t0) * 1000, 2)
+                return out, settings.llm_model, False, meta
+        except httpx.TimeoutException as exc:
+            timed_out = True
+            last_error = f"timeout: {exc}"
+            retries_used = attempt
+            logger.warning("LLM timeout attempt=%s: %s", attempt, exc)
+        except Exception as exc:
+            last_error = f"{type(exc).__name__}: {exc}"
+            retries_used = attempt
+            logger.warning("LLM error attempt=%s: %s", attempt, last_error)
+            # Non-timeout HTTP 4xx usually won't help on retry
+            if isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
+                if 400 <= exc.response.status_code < 500 and exc.response.status_code != 429:
+                    break
+        if attempt < LLM_MAX_RETRIES:
+            # brief backoff before retry
+            import asyncio
+
+            await asyncio.sleep(0.5 * (2**attempt))
+
+    # Fail-open: heuristic over-flags rather than dropping articles
+    out = _heuristic_screen(title, abstract, product_names, mesh_terms)
+    meta.update(
+        {
+            "llm_fallback": True,
+            "llm_timeout": timed_out,
+            "llm_retries": retries_used,
+            "error": last_error,
+        }
+    )
+    logger.warning(
+        "LLM fail-open to heuristic: timeout=%s retries=%s error=%s",
+        timed_out,
+        retries_used,
+        last_error,
+    )
+    return out, "heuristic-fallback-v1", True, meta

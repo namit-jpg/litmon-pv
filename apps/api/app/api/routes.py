@@ -43,9 +43,12 @@ from app.schemas.api import (
     ProductUpdate,
     QueueStats,
     RecallIn,
+    RetrySearchRunIn,
     ReviewIn,
     ReviewOut,
     RunSearchIn,
+    SearchRunArticleItem,
+    SearchRunDetail,
     SearchRunOut,
     SearchStringCreate,
     SearchStringOut,
@@ -66,9 +69,11 @@ from app.services.jobs import enqueue_job
 from app.services.pipeline import (
     recall_article_to_review,
     rescore_article,
+    retry_search_run,
     run_search,
     seed_demo_articles_async,
 )
+from app.services.pubmed.errors import PubMedError
 from app.services.sla import list_overdue_articles, sla_summary
 from app.services.triage.engine import BANDS
 from pydantic import BaseModel, Field
@@ -142,14 +147,32 @@ def get_thresholds(_: User = Depends(get_current_user)) -> ThresholdsOut:
         }
         for name, lo, hi, queue, sla, _ in BANDS
     ]
+    key_ok = bool((settings.llm_api_key or "").strip())
+    if settings.llm_mock:
+        llm_mode = "mock"
+    elif not key_ok:
+        llm_mode = "mock_no_key"
+    else:
+        llm_mode = "live"
+    email = (settings.ncbi_email or "").strip()
+    email_ok = bool(email) and email not in (
+        "dev@example.com",
+        "your.email@company.com",
+    )
     return ThresholdsOut(
         prompt_version=settings.prompt_version,
         ruleset_version=settings.ruleset_version,
         threshold_version=settings.threshold_version,
         bands=bands,
         auto_clear_qc_sample_rate=settings.auto_clear_qc_sample_rate,
-        llm_mock=settings.llm_mock,
+        llm_mock=settings.llm_mock or not key_ok,
         llm_model=settings.llm_model,
+        llm_base_url=settings.llm_base_url,
+        llm_api_key_configured=key_ok,
+        llm_mode=llm_mode,
+        fail_open_on_llm_error=True,
+        ncbi_email_configured=email_ok,
+        ncbi_api_key_configured=bool((settings.ncbi_api_key or "").strip()),
     )
 
 
@@ -258,25 +281,142 @@ def list_search_runs(
     )
 
 
+@router.get("/search-runs/{run_id}", response_model=SearchRunDetail)
+def get_search_run(
+    run_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> SearchRunDetail:
+    run = db.get(SearchRun, run_id)
+    if not run:
+        raise HTTPException(404, "Search run not found")
+    ss = db.get(SearchString, run.search_string_id)
+    product = db.get(Product, ss.product_id) if ss else None
+    articles: list[SearchRunArticleItem] = []
+    for app in run.appearances:
+        art = app.article
+        if not art:
+            continue
+        triage = next((t for t in art.triage_assignments if t.is_active), None)
+        screening = (
+            max(art.screening_results, key=lambda s: s.id)
+            if art.screening_results
+            else None
+        )
+        articles.append(
+            SearchRunArticleItem(
+                id=art.id,
+                pmid=art.pmid,
+                title=art.title,
+                status=art.status,
+                is_first_seen=app.is_first_seen,
+                composite=screening.composite if screening else None,
+                queue=triage.queue if triage else None,
+            )
+        )
+    articles.sort(key=lambda a: (not a.is_first_seen, a.id))
+    return SearchRunDetail(
+        id=run.id,
+        search_string_id=run.search_string_id,
+        status=run.status,
+        query_snapshot=run.query_snapshot,
+        date_from=run.date_from,
+        date_to=run.date_to,
+        hit_count=run.hit_count,
+        new_article_count=run.new_article_count,
+        rehit_count=run.rehit_count,
+        error_message=run.error_message,
+        triggered_by=run.triggered_by,
+        started_at=run.started_at,
+        completed_at=run.completed_at,
+        created_at=run.created_at,
+        articles=articles,
+        product_id=product.id if product else None,
+        product_name=product.name if product else None,
+    )
+
+
 @router.post("/search-runs", response_model=SearchRunOut)
 async def trigger_search(
     body: RunSearchIn,
     db: Session = Depends(get_db),
     user: User = Depends(require_roles(Role.PV_LEAD, Role.ADMIN, Role.REVIEWER)),
 ) -> SearchRun:
+    from datetime import date, timedelta
+
+    date_from = body.date_from
+    date_to = body.date_to
+    if body.days is not None:
+        date_to = date.today()
+        date_from = date_to - timedelta(days=body.days)
     try:
         return await run_search(
             db,
             body.search_string_id,
-            date_from=body.date_from,
-            date_to=body.date_to,
+            date_from=date_from,
+            date_to=date_to,
             triggered_by=user.email,
             max_fetch=body.max_fetch,
         )
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
+    except PubMedError as e:
+        # Run is already persisted as FAILED — surface operator-friendly text
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "message": e.user_message,
+                "retryable": e.retryable,
+                "error_type": "PubMedError",
+            },
+        ) from e
     except Exception as e:
-        raise HTTPException(502, f"PubMed search failed: {e}") from e
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "message": f"PubMed search failed: {e}",
+                "retryable": True,
+                "error_type": type(e).__name__,
+            },
+        ) from e
+
+
+@router.post("/search-runs/{run_id}/retry", response_model=SearchRunOut)
+async def retry_failed_search_run(
+    run_id: int,
+    body: RetrySearchRunIn | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(Role.PV_LEAD, Role.ADMIN, Role.REVIEWER)),
+) -> SearchRun:
+    """Retry a search run (typically FAILED) with the same string and date window."""
+    max_fetch = body.max_fetch if body else 30
+    try:
+        return await retry_search_run(
+            db,
+            run_id,
+            triggered_by=user.email,
+            max_fetch=max_fetch,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    except PubMedError as e:
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "message": e.user_message,
+                "retryable": e.retryable,
+                "error_type": "PubMedError",
+            },
+        ) from e
+    except Exception as e:
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "message": f"PubMed search retry failed: {e}",
+                "retryable": True,
+                "error_type": type(e).__name__,
+            },
+        ) from e
 
 
 @router.post("/demo/seed-articles")
