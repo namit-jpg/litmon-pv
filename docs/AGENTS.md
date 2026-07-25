@@ -1,0 +1,84 @@
+# Guide for AI coding agents
+
+You are working on **LitMon-PV** — Literature Monitoring Automation for Pharmacovigilance.
+
+## What this system is
+
+An AI-assisted, **human-in-the-loop** pipeline that:
+
+1. Searches **PubMed** (NCBI E-utilities API only — free, no scraping)  
+2. Deduplicates by PMID/DOI  
+3. Scores abstracts (product match, event relevance, ICSR criteria) with reason tags  
+4. Routes to queues (Auto-Clear / Standard / Priority / Expedited) with SLAs  
+5. Lets PV reviewers confirm ICSR vs not-a-case with an explicit 4-criteria checklist  
+6. Exports structured packages for case management (no direct Argus integration)
+
+**Regulatory posture:** Pilot / prototype only — not GxP validated. Prefer over-flagging. Never silently discard potentially reportable articles.
+
+## Repo root
+
+After clone, the monorepo root contains `apps/`, `docs/`, `workers/`, `data/`.
+
+## Where to change what
+
+| Need | Location |
+|------|----------|
+| HTTP endpoints | `apps/api/app/api/routes.py` |
+| Auth / RBAC | `apps/api/app/api/deps.py`, `core/security.py` |
+| DB models | `apps/api/app/models/entities.py` |
+| PubMed client | `apps/api/app/services/pubmed/client.py` |
+| AI scoring | `apps/api/app/services/ai/scorer.py` |
+| Triage thresholds | `apps/api/app/services/triage/engine.py` |
+| Search/score pipeline | `apps/api/app/services/pipeline.py` |
+| Background jobs | `apps/api/app/services/jobs.py` |
+| React pages | `apps/web/src/pages/*` |
+| API client (web) | `apps/web/src/api.ts` |
+| Env defaults | `.env.example`, `apps/api/app/core/config.py` |
+
+## Local run (agent checklist)
+
+1. Copy `.env.example` → `.env`  
+2. `apps/api`: venv, `pip install -r requirements.txt`, `PYTHONPATH=.`, `python -m app.bootstrap`, `uvicorn app.main:app --port 8000`  
+3. `apps/web`: `npm install`, `npm run dev`  
+4. Tests: `pytest tests -q` from `apps/api`  
+
+Default admin: `admin@litmon.local` / `admin123`
+
+## Non-negotiables
+
+- Do **not** add Embase scraping or PubMed HTML scraping.  
+- Do **not** auto-finalize ICSR without human action.  
+- Do **not** hard-delete articles; use status + archive + recall.  
+- Do **not** commit secrets, `.env`, or `*.db`.  
+- Keep screening dimensions separate (product / event / icsr), not a single opaque score only.  
+- Log model/prompt/ruleset/threshold versions on every score.
+
+## Out of scope (unless user explicitly expands)
+
+- Argus / ArisGlobal live integration  
+- Multi-tenant SaaS  
+- Formal GxP CSV package  
+- Social media listening  
+- Full native multi-language NLP  
+
+## Docs to read first
+
+1. [SETUP.md](SETUP.md)  
+2. [architecture.md](architecture.md)  
+3. [API.md](API.md)  
+4. [pilot_runbook.md](pilot_runbook.md)  
+
+## Suggested next work (if user says “continue”)
+
+- Wire production LLM defaults and prompt evaluation harness improvements  
+- Multi-product admin UX  
+- Alembic migrations instead of `create_all` only  
+- Playwright E2E for login → review → export  
+- Postgres-first docker compose full stack  
+- Phase 2 validation checklist document  
+
+## Architecture one-liner
+
+```text
+PubMed E-utilities → Ingest/Dedup → LLM/heuristic score → Rules triage → React reviewer → Export JSON/CSV
+```

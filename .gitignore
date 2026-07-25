@@ -1,0 +1,51 @@
+# Secrets & local env
+.env
+.env.local
+.env.*.local
+*.pem
+
+# Python
+apps/api/.venv/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+
+# Database & local data
+*.db
+*.db-journal
+*.sqlite3
+apps/api/litmon.db
+backups/
+
+# Node
+apps/web/node_modules/
+apps/web/dist/
+npm-debug.log*
+yarn-error.log*
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs & temp
+*.log
+tmp/
+temp/
+.cache/
+
+# Docker volumes (if any local)
+pgdata/
