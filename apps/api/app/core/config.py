@@ -10,10 +10,11 @@ _API = Path(__file__).resolve().parents[2]
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
+        # Later files override earlier ones — keep real .env last so it wins over .env.example
         env_file=(
-            str(_ROOT / ".env"),
-            str(_API / ".env"),
             str(_ROOT / ".env.example"),
+            str(_API / ".env"),
+            str(_ROOT / ".env"),
         ),
         env_file_encoding="utf-8",
         extra="ignore",

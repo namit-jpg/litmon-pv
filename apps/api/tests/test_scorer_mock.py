@@ -11,7 +11,11 @@ from app.services.ai.scorer import (
 from app.services.ai.schemas import ScreeningOutput
 
 
-def test_mock_scorer_flags_case_report():
+def test_mock_scorer_flags_case_report(monkeypatch):
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "llm_mock", True)
     out, model, is_mock, meta = asyncio.run(
         score_article(
             title="Fatal hepatotoxicity with DrugX in a 67-year-old woman: a case report",

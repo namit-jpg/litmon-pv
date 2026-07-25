@@ -242,8 +242,30 @@ export const api = {
     request<{ id: number; name: string; synonyms: string[] }[]>("/api/products"),
   searchStrings: () =>
     request<
-      { id: number; product_id: number; query_text: string; version: number }[]
+      {
+        id: number;
+        product_id: number;
+        query_text: string;
+        version: number;
+        is_active: boolean;
+        notes?: string;
+      }[]
     >("/api/search-strings"),
+  createSearchString: (body: {
+    product_id: number;
+    query_text: string;
+    notes?: string;
+  }) =>
+    request<{
+      id: number;
+      product_id: number;
+      query_text: string;
+      version: number;
+      is_active: boolean;
+    }>("/api/search-strings", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   searchRuns: () => request<Record<string, unknown>[]>("/api/search-runs"),
   searchRun: (id: number) =>
     request<SearchRunDetail>(`/api/search-runs/${id}`),

@@ -62,7 +62,18 @@ def build_user_payload(
 
 def parse_llm_screening_json(content: str) -> ScreeningOutput:
     """Parse and validate model JSON into ScreeningOutput (unit-testable)."""
-    parsed = json.loads(content)
+    text = (content or "").strip()
+    # Models sometimes wrap JSON in ```json ... ``` fences
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+        text = text.strip()
+    # Fallback: extract first {...} block if prose sneaks in
+    if text and not text.startswith("{"):
+        m = re.search(r"\{[\s\S]*\}", text)
+        if m:
+            text = m.group(0)
+    parsed = json.loads(text)
     return ScreeningOutput.model_validate(parsed)
 
 
@@ -263,9 +274,26 @@ async def score_article(
     timed_out = False
     retries_used = 0
 
+    # Anthropic OpenAI-compat rejects response_format.type=json_object
+    # (expects json_schema). OpenAI-style providers accept json_object.
+    is_anthropic = "anthropic.com" in (settings.llm_base_url or "").lower()
+
     for attempt in range(LLM_MAX_RETRIES + 1):
         try:
             t0 = time.perf_counter()
+            body: dict[str, Any] = {
+                "model": settings.llm_model,
+                "temperature": 0.1,
+                "messages": [
+                    {"role": "system", "content": PROMPT_SYSTEM},
+                    {
+                        "role": "user",
+                        "content": json.dumps(payload_user),
+                    },
+                ],
+            }
+            if not is_anthropic:
+                body["response_format"] = {"type": "json_object"}
             async with httpx.AsyncClient(timeout=LLM_TIMEOUT_SECONDS) as client:
                 resp = await client.post(
                     f"{settings.llm_base_url.rstrip('/')}/chat/completions",
@@ -273,18 +301,7 @@ async def score_article(
                         "Authorization": f"Bearer {settings.llm_api_key}",
                         "Content-Type": "application/json",
                     },
-                    json={
-                        "model": settings.llm_model,
-                        "temperature": 0.1,
-                        "response_format": {"type": "json_object"},
-                        "messages": [
-                            {"role": "system", "content": PROMPT_SYSTEM},
-                            {
-                                "role": "user",
-                                "content": json.dumps(payload_user),
-                            },
-                        ],
-                    },
+                    json=body,
                 )
                 resp.raise_for_status()
                 data = resp.json()
@@ -293,7 +310,9 @@ async def score_article(
                 out = _apply_dictionary_boost(out, title, abstract, product_names)
                 meta["llm_retries"] = retries_used
                 meta["latency_ms"] = round((time.perf_counter() - t0) * 1000, 2)
-                return out, settings.llm_model, False, meta
+                # Prefer provider-returned model id when present
+                returned_model = data.get("model") or settings.llm_model
+                return out, str(returned_model), False, meta
         except httpx.TimeoutException as exc:
             timed_out = True
             last_error = f"timeout: {exc}"

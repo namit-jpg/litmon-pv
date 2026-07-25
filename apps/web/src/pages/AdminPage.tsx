@@ -8,12 +8,36 @@ const DATE_PRESETS = [
   { label: "30 days", days: 30 },
 ] as const;
 
+const REAL_QUERY_EXAMPLES = [
+  {
+    label: "Ibuprofen safety (good for live test)",
+    query:
+      '(ibuprofen OR "advil") AND (adverse OR "case report" OR toxicity OR safety OR "side effect")',
+  },
+  {
+    label: "Metformin case reports",
+    query:
+      '(metformin) AND ("case report" OR adverse OR lactic OR toxicity) AND humans[MeSH Terms]',
+  },
+  {
+    label: "DrugX pilot (demo only — 0 live hits)",
+    query:
+      '("DrugX" OR drugxanib OR "DX-101") AND (adverse OR safety OR toxicity OR "case report")',
+  },
+] as const;
+
 export default function AdminPage() {
   const [products, setProducts] = useState<
     { id: number; name: string; synonyms: string[] }[]
   >([]);
   const [strings, setStrings] = useState<
-    { id: number; product_id: number; query_text: string; version: number }[]
+    {
+      id: number;
+      product_id: number;
+      query_text: string;
+      version: number;
+      is_active?: boolean;
+    }[]
   >([]);
   const [runs, setRuns] = useState<Record<string, unknown>[]>([]);
   const [exports, setExports] = useState<Record<string, unknown>[]>([]);
@@ -26,9 +50,12 @@ export default function AdminPage() {
   const [msg, setMsg] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [searchDays, setSearchDays] = useState(7);
-  const [maxFetch, setMaxFetch] = useState(15);
+  const [searchDays, setSearchDays] = useState(30);
+  const [maxFetch, setMaxFetch] = useState(20);
   const [selectedStringId, setSelectedStringId] = useState<number | "">("");
+  const [queryDraft, setQueryDraft] = useState(REAL_QUERY_EXAMPLES[0].query);
+  const [searchProductId, setSearchProductId] = useState<number | "">("");
+  const [queryNotes, setQueryNotes] = useState("Live pilot search string");
 
   async function refresh() {
     try {
@@ -44,8 +71,23 @@ export default function AdminPage() {
       setRuns(r);
       setExports(ex);
       setThresholds(th);
-      if (selectedStringId === "" && s[0]) {
-        setSelectedStringId(s[0].id);
+      // Prefer real pilot product over SLA test junk
+      const preferred =
+        p.find((x) => /DrugX|Pilot/i.test(x.name)) || p[p.length - 1] || p[0];
+      if (searchProductId === "" && preferred) {
+        setSearchProductId(preferred.id);
+      }
+      // Prefer active string for selected product, else newest
+      if (selectedStringId === "" && s.length) {
+        const pid = preferred?.id;
+        const active =
+          s.find((x) => x.product_id === pid && x.is_active) ||
+          s.find((x) => x.is_active) ||
+          s[0];
+        if (active) {
+          setSelectedStringId(active.id);
+          setQueryDraft(active.query_text);
+        }
       }
     } catch (e) {
       setError(String(e));
@@ -57,11 +99,15 @@ export default function AdminPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const productId = products[0]?.id;
+  const productId =
+    typeof searchProductId === "number"
+      ? searchProductId
+      : products.find((x) => /DrugX|Pilot/i.test(x.name))?.id ||
+        products[products.length - 1]?.id;
   const activeStringId =
     typeof selectedStringId === "number"
       ? selectedStringId
-      : strings[0]?.id;
+      : strings.find((s) => s.is_active)?.id || strings[0]?.id;
 
   async function wrap(fn: () => Promise<void>) {
     setBusy(true);
@@ -209,10 +255,11 @@ export default function AdminPage() {
       </section>
 
       <section className="card">
-        <h2>Run PubMed search (live E-utilities)</h2>
+        <h2>PubMed search string (editable)</h2>
         <p className="muted">
-          Uses NCBI ESearch → EFetch only (no HTML scraping). Requires a real{" "}
-          <code>NCBI_EMAIL</code>. Failed runs appear below and can be retried.
+          The default DrugX query is <strong>fictional</strong> and returns 0
+          live hits. Edit the query below, save a new version, then run search.
+          Saving creates a versioned string (old ones stay for audit).
         </p>
         {!thresholds?.ncbi_email_configured && (
           <div className="warn-banner">
@@ -222,19 +269,124 @@ export default function AdminPage() {
         )}
         <div className="form-grid">
           <label>
-            Search string
+            Product (articles will be filed under this)
             <select
-              value={activeStringId ?? ""}
+              value={productId ?? ""}
               onChange={(e) =>
-                setSelectedStringId(
+                setSearchProductId(
                   e.target.value ? Number(e.target.value) : ""
                 )
               }
             >
-              {strings.length === 0 && <option value="">None configured</option>}
+              {products.length === 0 && <option value="">None</option>}
+              {products.map((p) => (
+                <option key={p.id} value={p.id}>
+                  #{p.id} {p.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Load example
+            <select
+              defaultValue=""
+              onChange={(e) => {
+                const ex = REAL_QUERY_EXAMPLES.find(
+                  (x) => x.label === e.target.value
+                );
+                if (ex) setQueryDraft(ex.query);
+              }}
+            >
+              <option value="">— pick example —</option>
+              {REAL_QUERY_EXAMPLES.map((ex) => (
+                <option key={ex.label} value={ex.label}>
+                  {ex.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Notes (optional)
+            <input
+              value={queryNotes}
+              onChange={(e) => setQueryNotes(e.target.value)}
+              placeholder="Why this string"
+            />
+          </label>
+        </div>
+        <label>
+          PubMed query (ESearch term)
+          <textarea
+            rows={4}
+            value={queryDraft}
+            onChange={(e) => setQueryDraft(e.target.value)}
+            placeholder='(ibuprofen) AND (adverse OR "case report")'
+            spellCheck={false}
+          />
+        </label>
+        <div className="row-actions wrap">
+          <button
+            className="btn primary"
+            disabled={busy || !productId || !queryDraft.trim()}
+            onClick={() =>
+              wrap(async () => {
+                const created = await api.createSearchString({
+                  product_id: productId!,
+                  query_text: queryDraft.trim(),
+                  notes: queryNotes || undefined,
+                });
+                setSelectedStringId(created.id);
+                setMsg(
+                  `Saved search string #${created.id} (v${created.version}) as active for product ${created.product_id}`
+                );
+              })
+            }
+          >
+            Save as new active search string
+          </button>
+          <button
+            className="btn"
+            type="button"
+            disabled={!queryDraft.trim()}
+            onClick={() =>
+              setQueryDraft(
+                strings.find((s) => s.id === activeStringId)?.query_text ||
+                  queryDraft
+              )
+            }
+          >
+            Reset draft from selected version
+          </button>
+        </div>
+      </section>
+
+      <section className="card">
+        <h2>Run PubMed search (live E-utilities)</h2>
+        <p className="muted">
+          Uses NCBI ESearch → EFetch only (no HTML scraping). Pick a saved
+          version, date window, then run.
+        </p>
+        <div className="form-grid">
+          <label>
+            Saved search string
+            <select
+              value={activeStringId ?? ""}
+              onChange={(e) => {
+                const id = e.target.value ? Number(e.target.value) : "";
+                setSelectedStringId(id);
+                if (typeof id === "number") {
+                  const s = strings.find((x) => x.id === id);
+                  if (s) setQueryDraft(s.query_text);
+                }
+              }}
+            >
+              {strings.length === 0 && (
+                <option value="">Save a query above first</option>
+              )}
               {strings.map((s) => (
                 <option key={s.id} value={s.id}>
                   #{s.id} · product {s.product_id} · v{s.version}
+                  {s.is_active ? " · ACTIVE" : ""}
                 </option>
               ))}
             </select>
@@ -261,13 +413,14 @@ export default function AdminPage() {
               min={1}
               max={200}
               value={maxFetch}
-              onChange={(e) => setMaxFetch(Number(e.target.value) || 15)}
+              onChange={(e) => setMaxFetch(Number(e.target.value) || 20)}
             />
           </label>
         </div>
         {activeStringId && (
           <pre className="code-block" style={{ marginTop: "0.75rem" }}>
-            {strings.find((s) => s.id === activeStringId)?.query_text}
+            {strings.find((s) => s.id === activeStringId)?.query_text ||
+              queryDraft}
           </pre>
         )}
         <div className="row-actions wrap" style={{ marginTop: "0.75rem" }}>
@@ -297,9 +450,43 @@ export default function AdminPage() {
           >
             Run PubMed search ({searchDays}d)
           </button>
+          <button
+            className="btn"
+            disabled={busy || !productId || !queryDraft.trim()}
+            title="Save draft then run in one click"
+            onClick={() =>
+              wrap(async () => {
+                const created = await api.createSearchString({
+                  product_id: productId!,
+                  query_text: queryDraft.trim(),
+                  notes: queryNotes || "Saved on run",
+                });
+                setSelectedStringId(created.id);
+                setMsg(
+                  `Saved #${created.id}, calling PubMed (last ${searchDays} days)…`
+                );
+                const run = (await api.runSearch(created.id, {
+                  max_fetch: maxFetch,
+                  days: searchDays,
+                })) as Record<string, unknown>;
+                if (String(run.status) === "failed") {
+                  setError(
+                    `Search #${run.id} failed: ${run.error_message || "unknown"}`
+                  );
+                } else {
+                  setMsg(
+                    `Saved string #${created.id} → Search #${run.id}: ${run.status}, hits=${run.hit_count}, new=${run.new_article_count}`
+                  );
+                }
+              })
+            }
+          >
+            Save query &amp; run ({searchDays}d)
+          </button>
         </div>
         <p className="hint">
-          Scheduler CLI: <code>workers/scheduled_search.py --days 7</code>
+          Tip: use the ibuprofen example + 30 days to see real hits. DrugX
+          always returns 0 on live PubMed.
         </p>
       </section>
 
@@ -484,15 +671,34 @@ export default function AdminPage() {
       </section>
 
       <section className="card">
-        <h2>Search strings</h2>
-        {strings.map((s) => (
-          <div key={s.id} className="code-block">
-            <div className="muted">
-              id={s.id} · product={s.product_id} · v{s.version}
+        <h2>Search string history</h2>
+        {strings.length === 0 ? (
+          <p className="muted">None yet — create one above.</p>
+        ) : (
+          strings.map((s) => (
+            <div key={s.id} className="code-block">
+              <div className="muted">
+                id={s.id} · product={s.product_id} · v{s.version}
+                {s.is_active ? " · ACTIVE" : ""}
+                {" · "}
+                <button
+                  type="button"
+                  className="btn"
+                  style={{ padding: "0.15rem 0.5rem", fontSize: "0.8rem" }}
+                  onClick={() => {
+                    setSelectedStringId(s.id);
+                    setQueryDraft(s.query_text);
+                    setSearchProductId(s.product_id);
+                    setMsg(`Loaded string #${s.id} into editor`);
+                  }}
+                >
+                  Load into editor
+                </button>
+              </div>
+              <code>{s.query_text}</code>
             </div>
-            <code>{s.query_text}</code>
-          </div>
-        ))}
+          ))
+        )}
       </section>
 
       <section className="card">
