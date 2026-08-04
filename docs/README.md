@@ -13,6 +13,7 @@
 | [pilot_runbook.md](pilot_runbook.md) | PV ops | Day-to-day pilot operations |
 | [parallel_run_protocol.md](parallel_run_protocol.md) | PV Lead | Sensitivity parallel-run process |
 | [CHANGELOG.md](CHANGELOG.md) | Everyone | Notable version history |
+| [thursday_pilot_plan.md](thursday_pilot_plan.md) | Demo team | Two-day assignment, signal, dashboard, and alerts delivery plan |
 
 ## Status
 

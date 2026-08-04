@@ -8,6 +8,8 @@ import ArchivePage from "./pages/ArchivePage";
 import AuditPage from "./pages/AuditPage";
 import OpsPage from "./pages/OpsPage";
 import SearchRunPage from "./pages/SearchRunPage";
+import DashboardPage from "./pages/DashboardPage";
+import AlertsBar from "./components/AlertsBar";
 
 function Shell({ children }: { children: React.ReactNode }) {
   const { user, logout } = useAuth();
@@ -20,12 +22,14 @@ function Shell({ children }: { children: React.ReactNode }) {
           <span className="badge">Pilot — not GxP validated</span>
         </div>
         <nav>
-          <Link to="/">Queues</Link>
+          <Link to="/dashboard">Dashboard</Link>
+          <Link to="/?tab=all">My Work</Link>
           <Link to="/archive">Archive</Link>
           <Link to="/ops">Ops</Link>
           <Link to="/audit">Audit</Link>
           <Link to="/admin">Admin</Link>
         </nav>
+        <AlertsBar />
         <div className="userbox">
           <span>
             {user?.full_name} ({user?.role})
@@ -61,6 +65,14 @@ export default function App() {
         element={
           <Private>
             <QueuePage />
+          </Private>
+        }
+      />
+      <Route
+        path="/dashboard"
+        element={
+          <Private>
+            <DashboardPage />
           </Private>
         }
       />

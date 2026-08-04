@@ -51,6 +51,42 @@ export type User = {
   role: string;
 };
 
+export type Product = {
+  id: number;
+  name: string;
+  inn?: string;
+  brands: string[];
+  synonyms: string[];
+  is_active: boolean;
+  primary_reviewer_id?: number | null;
+};
+
+export type AlertItem = {
+  id: number;
+  user_id: number;
+  article_id?: number;
+  alert_type: string;
+  priority: string;
+  title: string;
+  message: string;
+  read_at?: string;
+  created_at: string;
+};
+
+export type DashboardSummary = {
+  scope: string;
+  total_articles: number;
+  awaiting_review: number;
+  potential_signals: number;
+  confirmed_signals: number;
+  valid_icsr: number;
+  not_relevant: number;
+  deferred: number;
+  overdue: number;
+  unread_alerts: number;
+  by_product: { product_id: number; product_name: string; count: number }[];
+};
+
 export type QueueStats = {
   expedited: number;
   priority: number;
@@ -76,6 +112,7 @@ export type ArticleListItem = {
   sla_due_at?: string;
   hard_rule_triggered: boolean;
   assignee_id?: number;
+  signal_status: string;
 };
 
 export type ArticleDetail = {
@@ -93,6 +130,7 @@ export type ArticleDetail = {
   status: string;
   product_id: number;
   assignee_id?: number;
+  signal_status: string;
   latest_screening?: {
     product_match: number;
     event_relevance: number;
@@ -199,13 +237,20 @@ export const api = {
     return res.json() as Promise<{ access_token: string }>;
   },
   me: () => request<User>("/api/auth/me"),
-  queueStats: () => request<QueueStats>("/api/queues/stats"),
+  users: () => request<User[]>("/api/users"),
+  queueStats: (mineOnly = false) =>
+    request<QueueStats>(`/api/queues/stats${mineOnly ? "?mine_only=true" : ""}`),
   articles: (opts?: {
     queue?: string;
     open_only?: boolean;
     include_archive?: boolean;
     q?: string;
     status?: string;
+    product_id?: number;
+    mine_only?: boolean;
+    assignee_id?: number;
+    signal_status?: string;
+    overdue_only?: boolean;
   }) => {
     const open =
       opts?.include_archive
@@ -220,6 +265,11 @@ export const api = {
         include_archive: opts?.include_archive ? "true" : undefined,
         q: opts?.q,
         status: opts?.status,
+        product_id: opts?.product_id ? String(opts.product_id) : undefined,
+        mine_only: opts?.mine_only ? "true" : undefined,
+        assignee_id: opts?.assignee_id ? String(opts.assignee_id) : undefined,
+        signal_status: opts?.signal_status,
+        overdue_only: opts?.overdue_only ? "true" : undefined,
       })}`
     );
   },
@@ -238,8 +288,12 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ rationale }),
     }),
-  products: () =>
-    request<{ id: number; name: string; synonyms: string[] }[]>("/api/products"),
+  products: () => request<Product[]>("/api/products"),
+  updateProduct: (id: number, body: Partial<Product>) =>
+    request<Product>(`/api/products/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
   searchStrings: () =>
     request<
       {
@@ -317,6 +371,16 @@ export const api = {
   evaluation: () =>
     request<EvalResult>("/api/evaluation/run", { method: "POST" }),
   thresholds: () => request<ThresholdsConfig>("/api/config/thresholds"),
+  dashboard: (mineOnly = false) =>
+    request<DashboardSummary>(
+      `/api/dashboard/summary${mineOnly ? "?mine_only=true" : ""}`
+    ),
+  alerts: (unreadOnly = false) =>
+    request<AlertItem[]>(`/api/alerts${unreadOnly ? "?unread_only=true" : ""}`),
+  readAlert: (id: number) =>
+    request<AlertItem>(`/api/alerts/${id}/read`, { method: "POST" }),
+  readAllAlerts: () =>
+    request<{ updated: number }>("/api/alerts/read-all", { method: "POST" }),
   audit: (opts?: { entity_type?: string; entity_id?: string; action?: string }) =>
     request<Record<string, unknown>[]>(
       `/api/audit${qs({

@@ -15,6 +15,7 @@ from app.core.metrics import metrics
 from app.core.rate_limit import login_limiter
 from app.core.security import create_access_token, verify_password
 from app.models import (
+    Alert,
     Article,
     AuditEvent,
     ExportPackage,
@@ -31,10 +32,12 @@ from app.models.entities import (
     DecisionAction,
     QueueType,
     Role,
+    SignalStatus,
 )
 from app.schemas.api import (
     ArticleDetail,
     ArticleListItem,
+    AlertOut,
     AuditOut,
     ExportOut,
     ImportCsvIn,
@@ -57,6 +60,7 @@ from app.schemas.api import (
     UserOut,
 )
 from app.services.audit import log_event
+from app.services.alerts import create_alert, mark_alert_read
 from app.services.evaluation import evaluate_gold_set
 from app.services.export_service import create_icsr_export, create_parallel_run_export
 from app.services.import_service import (
@@ -131,6 +135,16 @@ def me(user: User = Depends(get_current_user)) -> User:
     return user
 
 
+@router.get("/users", response_model=list[UserOut])
+def list_users(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> list[User]:
+    return list(
+        db.scalars(select(User).where(User.is_active.is_(True)).order_by(User.full_name)).all()
+    )
+
+
 # ── Config / thresholds ───────────────────────────────────────────────
 
 
@@ -198,15 +212,51 @@ def update_product(
     if not product:
         raise HTTPException(404, "Product not found")
     data = body.model_dump(exclude_unset=True)
+    reviewer_id = data.get("primary_reviewer_id")
+    if reviewer_id is not None:
+        reviewer = db.get(User, reviewer_id)
+        if not reviewer or not reviewer.is_active:
+            raise HTTPException(400, "Primary reviewer must be an active user")
     for k, v in data.items():
         setattr(product, k, v)
+    reassigned = 0
+    if "primary_reviewer_id" in data:
+        open_articles = list(
+            db.scalars(
+                select(Article).where(
+                    Article.product_id == product.id,
+                    Article.status.notin_(
+                        [
+                            ArticleStatus.AUTO_CLEAR,
+                            ArticleStatus.DISPOSITION_NOT_CASE,
+                            ArticleStatus.DISPOSITION_VALID_ICSR,
+                        ]
+                    ),
+                )
+            ).all()
+        )
+        for article in open_articles:
+            if article.assignee_id == reviewer_id:
+                continue
+            article.assignee_id = reviewer_id
+            reassigned += 1
+            create_alert(
+                db,
+                user_id=reviewer_id,
+                article_id=article.id,
+                alert_type="work_assigned",
+                priority="normal",
+                title=f"{product.name} review assigned",
+                message=article.title,
+                dedupe_key=f"product-reassignment:{article.id}:{reviewer_id}",
+            )
     log_event(
         db,
         actor=user.email,
         action="product_updated",
         entity_type="product",
         entity_id=product.id,
-        payload=data,
+        payload={**data, "open_articles_reassigned": reassigned},
     )
     db.commit()
     db.refresh(product)
@@ -497,8 +547,9 @@ async def import_csv(
 
 @router.get("/queues/stats", response_model=QueueStats)
 def queue_stats(
+    mine_only: bool = Query(default=False),
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ) -> QueueStats:
     closed = [
         ArticleStatus.DISPOSITION_NOT_CASE,
@@ -506,27 +557,25 @@ def queue_stats(
     ]
 
     def count_queue(q: QueueType) -> int:
-        return (
-            db.scalar(
-                select(func.count())
-                .select_from(TriageAssignment)
-                .join(Article, Article.id == TriageAssignment.article_id)
-                .where(
-                    TriageAssignment.is_active.is_(True),
-                    TriageAssignment.queue == q,
-                    Article.status.notin_(closed),
-                )
+        query = (
+            select(func.count())
+            .select_from(TriageAssignment)
+            .join(Article, Article.id == TriageAssignment.article_id)
+            .where(
+                TriageAssignment.is_active.is_(True),
+                TriageAssignment.queue == q,
+                Article.status.notin_(closed),
             )
-            or 0
         )
+        if mine_only:
+            query = query.where(Article.assignee_id == user.id)
+        return db.scalar(query) or 0
 
     def count_status(st: ArticleStatus) -> int:
-        return (
-            db.scalar(
-                select(func.count()).select_from(Article).where(Article.status == st)
-            )
-            or 0
-        )
+        query = select(func.count()).select_from(Article).where(Article.status == st)
+        if mine_only:
+            query = query.where(Article.assignee_id == user.id)
+        return db.scalar(query) or 0
 
     return QueueStats(
         expedited=count_queue(QueueType.EXPEDITED),
@@ -550,8 +599,11 @@ def list_articles(
     open_only: bool = Query(default=True),
     include_archive: bool = Query(default=False),
     overdue_only: bool = Query(default=False),
+    mine_only: bool = Query(default=False),
+    assignee_id: Optional[int] = None,
+    signal_status: Optional[SignalStatus] = None,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ) -> list[ArticleListItem]:
     query = select(Article)
     if product_id:
@@ -559,6 +611,12 @@ def list_articles(
     if status:
         query = query.where(Article.status == status)
         open_only = False  # explicit status wins
+    if mine_only:
+        query = query.where(Article.assignee_id == user.id)
+    elif assignee_id:
+        query = query.where(Article.assignee_id == assignee_id)
+    if signal_status:
+        query = query.where(Article.signal_status == signal_status)
     if include_archive:
         # Archive browse: auto-clear + not-case + valid icsr
         query = query.where(
@@ -618,6 +676,7 @@ def list_articles(
                 sla_due_at=triage.sla_due_at if triage else None,
                 hard_rule_triggered=bool(triage and triage.hard_rule_triggered),
                 assignee_id=a.assignee_id,
+                signal_status=a.signal_status,
             )
         )
     items.sort(key=lambda x: (x.sla_due_at is None, x.sla_due_at or datetime.max))
@@ -687,6 +746,7 @@ def get_article(
         status=a.status,
         product_id=a.product_id,
         assignee_id=a.assignee_id,
+        signal_status=a.signal_status,
         latest_screening=screening,
         active_triage=triage,
         decisions=decisions,
@@ -752,6 +812,7 @@ def submit_review(
         override_notes=body.override_notes,
     )
     db.add(decision)
+    db.flush()
 
     if body.action == DecisionAction.CONFIRM_NOT_CASE:
         a.status = ArticleStatus.DISPOSITION_NOT_CASE
@@ -765,6 +826,33 @@ def submit_review(
         a.status = ArticleStatus.UNDER_REVIEW
     elif body.action == DecisionAction.OVERRIDE_AI:
         a.status = ArticleStatus.UNDER_REVIEW
+    elif body.action == DecisionAction.MARK_POTENTIAL_SIGNAL:
+        a.signal_status = SignalStatus.POTENTIAL
+        a.status = ArticleStatus.UNDER_REVIEW
+    elif body.action == DecisionAction.CONFIRM_SIGNAL:
+        if user.role not in (Role.PV_LEAD, Role.ADMIN, Role.SENIOR_REVIEWER):
+            raise HTTPException(403, "Senior reviewer or PV lead required to confirm a signal")
+        a.signal_status = SignalStatus.CONFIRMED
+        a.status = ArticleStatus.UNDER_REVIEW
+    elif body.action == DecisionAction.REJECT_SIGNAL:
+        a.signal_status = SignalStatus.REJECTED
+        a.status = ArticleStatus.UNDER_REVIEW
+
+    if body.action in (
+        DecisionAction.MARK_POTENTIAL_SIGNAL,
+        DecisionAction.CONFIRM_SIGNAL,
+        DecisionAction.REJECT_SIGNAL,
+    ):
+        create_alert(
+            db,
+            user_id=a.assignee_id or user.id,
+            article_id=a.id,
+            alert_type="signal_status_changed",
+            priority="high" if a.signal_status != SignalStatus.REJECTED else "normal",
+            title=a.signal_status.value.replace("_", " ").title(),
+            message=f"{a.title} — {body.rationale or 'Signal assessment updated'}",
+            dedupe_key=f"signal:{a.id}:{decision.id}",
+        )
 
     log_event(
         db,
@@ -812,6 +900,118 @@ def recall(
     except ValueError as e:
         raise HTTPException(404, str(e)) from e
     return {"article_id": art.id, "status": art.status.value}
+
+
+# ── Pilot dashboard & alert inbox ─────────────────────────────────────
+
+
+@router.get("/dashboard/summary")
+def dashboard_summary(
+    mine_only: bool = Query(default=False),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict:
+    article_filter = Article.assignee_id == user.id if mine_only else None
+
+    def count_where(*conditions: Any) -> int:
+        q = select(func.count()).select_from(Article)
+        if article_filter is not None:
+            q = q.where(article_filter)
+        if conditions:
+            q = q.where(*conditions)
+        return db.scalar(q) or 0
+
+    open_statuses = [
+        ArticleStatus.INGESTED,
+        ArticleStatus.SCORED,
+        ArticleStatus.ROUTED,
+        ArticleStatus.UNDER_REVIEW,
+        ArticleStatus.DEFERRED,
+        ArticleStatus.SECOND_REVIEW,
+        ArticleStatus.QC_SAMPLE,
+    ]
+    by_product_q = (
+        select(Product.id, Product.name, func.count(Article.id))
+        .join(Article, Article.product_id == Product.id)
+        .group_by(Product.id, Product.name)
+        .order_by(Product.name)
+    )
+    if article_filter is not None:
+        by_product_q = by_product_q.where(article_filter)
+    by_product = [
+        {"product_id": pid, "product_name": name, "count": count}
+        for pid, name, count in db.execute(by_product_q).all()
+    ]
+    unread = db.scalar(
+        select(func.count())
+        .select_from(Alert)
+        .where(Alert.user_id == user.id, Alert.read_at.is_(None))
+    ) or 0
+    overdue = list_overdue_articles(db)
+    if mine_only:
+        overdue = [
+            i
+            for i in overdue
+            if (article := db.get(Article, i["id"])) is not None
+            and article.assignee_id == user.id
+        ]
+    return {
+        "scope": "mine" if mine_only else "all",
+        "total_articles": count_where(),
+        "awaiting_review": count_where(Article.status.in_(open_statuses)),
+        "potential_signals": count_where(Article.signal_status == SignalStatus.POTENTIAL),
+        "confirmed_signals": count_where(Article.signal_status == SignalStatus.CONFIRMED),
+        "valid_icsr": count_where(Article.status == ArticleStatus.DISPOSITION_VALID_ICSR),
+        "not_relevant": count_where(Article.status == ArticleStatus.DISPOSITION_NOT_CASE),
+        "deferred": count_where(Article.status == ArticleStatus.DEFERRED),
+        "overdue": len(overdue),
+        "unread_alerts": unread,
+        "by_product": by_product,
+    }
+
+
+@router.get("/alerts", response_model=list[AlertOut])
+def list_alerts(
+    unread_only: bool = Query(default=False),
+    limit: int = Query(default=30, ge=1, le=100),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> list[Alert]:
+    q = select(Alert).where(Alert.user_id == user.id)
+    if unread_only:
+        q = q.where(Alert.read_at.is_(None))
+    return list(db.scalars(q.order_by(Alert.id.desc()).limit(limit)).all())
+
+
+@router.post("/alerts/{alert_id}/read", response_model=AlertOut)
+def read_alert(
+    alert_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> Alert:
+    alert = db.get(Alert, alert_id)
+    if not alert or alert.user_id != user.id:
+        raise HTTPException(404, "Alert not found")
+    mark_alert_read(db, alert, actor=user.email)
+    db.commit()
+    db.refresh(alert)
+    return alert
+
+
+@router.post("/alerts/read-all")
+def read_all_alerts(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict:
+    alerts = list(
+        db.scalars(
+            select(Alert).where(Alert.user_id == user.id, Alert.read_at.is_(None))
+        ).all()
+    )
+    for alert in alerts:
+        mark_alert_read(db, alert, actor=user.email)
+    db.commit()
+    return {"updated": len(alerts)}
 
 
 # ── Export ────────────────────────────────────────────────────────────

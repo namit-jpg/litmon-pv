@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
-import { api, ArticleListItem, QueueStats } from "../api";
+import { Link, useSearchParams } from "react-router-dom";
+import { api, ArticleListItem, Product, QueueStats } from "../api";
 
 const TABS: {
   key: string;
@@ -32,30 +32,44 @@ function formatDue(due?: string) {
 }
 
 export default function QueuePage() {
-  const [tab, setTab] = useState("expedited");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [tab, setTab] = useState(searchParams.get("tab") || "expedited");
   const [stats, setStats] = useState<QueueStats | null>(null);
   const [items, setItems] = useState<ArticleListItem[]>([]);
   const [overdueCount, setOverdueCount] = useState(0);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [products, setProducts] = useState<Product[]>([]);
+
+  const mineOnly = searchParams.get("view") !== "all";
+  const productId = Number(searchParams.get("product_id")) || undefined;
+  const signalStatus = searchParams.get("signal_status") || undefined;
+  const requestedStatus = searchParams.get("status") || undefined;
+  const overdueOnly = searchParams.get("overdue") === "true";
 
   async function load() {
     setLoading(true);
     setError("");
     try {
       const t = TABS.find((x) => x.key === tab);
-      const [s, list, overdue] = await Promise.all([
-        api.queueStats(),
+      const [s, list, overdue, productList] = await Promise.all([
+        api.queueStats(mineOnly),
         api.articles({
-          queue: t?.queue,
-          status: t?.status,
-          open_only: !t?.status,
+          queue: requestedStatus || signalStatus || overdueOnly ? undefined : t?.queue,
+          status: requestedStatus || t?.status,
+          open_only: !(requestedStatus || t?.status),
+          mine_only: mineOnly,
+          product_id: productId,
+          signal_status: signalStatus,
+          overdue_only: overdueOnly,
         }),
         api.slaOverdue(),
+        api.products(),
       ]);
       setStats(s);
       setItems(list);
       setOverdueCount(overdue.count);
+      setProducts(productList);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -65,13 +79,20 @@ export default function QueuePage() {
 
   useEffect(() => {
     load();
-  }, [tab]);
+  }, [tab, searchParams.toString()]);
+
+  function setFilter(name: string, value?: string) {
+    const next = new URLSearchParams(searchParams);
+    if (value) next.set(name, value);
+    else next.delete(name);
+    setSearchParams(next);
+  }
 
   return (
     <div>
       <div className="page-head">
         <div>
-          <h1>Reviewer queues</h1>
+          <h1>{mineOnly ? "My assigned work" : "All reviewer work"}</h1>
           <p className="muted">
             AI ranks and explains; you decide. Nothing potentially reportable is
             discarded silently.
@@ -88,6 +109,51 @@ export default function QueuePage() {
           <Link to="/ops">Open Ops dashboard</Link> to prioritize breaches.
         </div>
       )}
+
+      <section className="card queue-filters">
+        <div className="form-grid">
+          <label>
+            Assignment scope
+            <select
+              value={mineOnly ? "mine" : "all"}
+              onChange={(e) => setFilter("view", e.target.value)}
+            >
+              <option value="mine">My work</option>
+              <option value="all">All work</option>
+            </select>
+          </label>
+          <label>
+            Product
+            <select
+              value={productId || ""}
+              onChange={(e) => setFilter("product_id", e.target.value)}
+            >
+              <option value="">All products</option>
+              {products.map((product) => (
+                <option value={product.id} key={product.id}>{product.name}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Signal status
+            <select
+              value={signalStatus || ""}
+              onChange={(e) => setFilter("signal_status", e.target.value)}
+            >
+              <option value="">All signal states</option>
+              <option value="potential_signal">Potential signal</option>
+              <option value="confirmed_signal">Confirmed signal</option>
+              <option value="rejected_signal">Rejected signal</option>
+            </select>
+          </label>
+          <button
+            className="btn"
+            onClick={() => setSearchParams(mineOnly ? { view: "mine" } : { view: "all" })}
+          >
+            Clear filters
+          </button>
+        </div>
+      </section>
 
       {stats && (
         <div className="stat-row">
@@ -131,7 +197,10 @@ export default function QueuePage() {
           <button
             key={t.key}
             className={tab === t.key ? "tab active" : "tab"}
-            onClick={() => setTab(t.key)}
+            onClick={() => {
+              setTab(t.key);
+              setFilter("tab", t.key);
+            }}
           >
             {t.label}
           </button>
@@ -158,6 +227,7 @@ export default function QueuePage() {
               <th>PMID</th>
               <th>Title</th>
               <th>Flags</th>
+              <th>Signal</th>
             </tr>
           </thead>
           <tbody>
@@ -177,6 +247,11 @@ export default function QueuePage() {
                   <span className={`pill queue-${a.queue || "none"}`}>
                     {a.queue || a.status}
                   </span>
+                </td>
+                <td>
+                  {a.signal_status !== "not_assessed" ? (
+                    <span className={`pill signal-${a.signal_status}`}>{a.signal_status.replace(/_/g, " ")}</span>
+                  ) : "—"}
                 </td>
                 <td>{a.composite != null ? a.composite.toFixed(2) : "—"}</td>
                 <td>{a.pmid}</td>

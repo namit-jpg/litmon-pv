@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, ArticleDetail } from "../api";
+import { useAuth } from "../auth";
 
 export default function ArticlePage() {
+  const { user } = useAuth();
   const { id } = useParams();
   const articleId = Number(id);
   const [article, setArticle] = useState<ArticleDetail | null>(null);
@@ -76,6 +78,9 @@ export default function ArticlePage() {
 
   const s = article.latest_screening;
   const t = article.active_triage;
+  const canConfirmSignal = ["senior_reviewer", "pv_lead", "admin"].includes(
+    user?.role || ""
+  );
 
   return (
     <div className="article-layout">
@@ -147,6 +152,45 @@ export default function ArticlePage() {
           {article.authors?.length > 0 && (
             <p className="muted">Authors: {article.authors.join("; ")}</p>
           )}
+        </section>
+
+        <section className="card signal-card">
+          <div className="page-head compact">
+            <div>
+              <h2>Signal assessment</h2>
+              <p className="muted">
+                AI can surface the article; a PV user must set the signal status.
+              </p>
+            </div>
+            <span className={`pill signal-${article.signal_status}`}>
+              {article.signal_status.replace(/_/g, " ")}
+            </span>
+          </div>
+          <div className="row-actions wrap">
+            <button
+              className="btn primary"
+              disabled={busy}
+              onClick={() => act("mark_potential_signal")}
+            >
+              Mark potential signal
+            </button>
+            {canConfirmSignal && (
+              <button
+                className="btn"
+                disabled={busy}
+                onClick={() => act("confirm_signal")}
+              >
+                Confirm signal
+              </button>
+            )}
+            <button
+              className="btn ghost"
+              disabled={busy}
+              onClick={() => act("reject_signal")}
+            >
+              Reject signal
+            </button>
+          </div>
         </section>
 
         <section className="card">

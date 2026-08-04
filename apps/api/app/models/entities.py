@@ -65,6 +65,16 @@ class DecisionAction(str, enum.Enum):
     REQUEST_SECOND_REVIEW = "request_second_review"
     DEFER_FULL_TEXT = "defer_full_text"
     RECALL_TO_REVIEW = "recall_to_review"
+    MARK_POTENTIAL_SIGNAL = "mark_potential_signal"
+    CONFIRM_SIGNAL = "confirm_signal"
+    REJECT_SIGNAL = "reject_signal"
+
+
+class SignalStatus(str, enum.Enum):
+    NOT_ASSESSED = "not_assessed"
+    POTENTIAL = "potential_signal"
+    CONFIRMED = "confirmed_signal"
+    REJECTED = "rejected_signal"
 
 
 class JobStatus(str, enum.Enum):
@@ -98,6 +108,9 @@ class Product(Base):
     synonyms: Mapped[list[Any]] = mapped_column(JSON, default=list)
     atc_code: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    primary_reviewer_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id"), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -162,7 +175,9 @@ class SearchRun(Base):
 
 class Article(Base):
     __tablename__ = "articles"
-    __table_args__ = (UniqueConstraint("pmid", name="uq_articles_pmid"),)
+    __table_args__ = (
+        UniqueConstraint("product_id", "pmid", name="uq_articles_product_pmid"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)
@@ -182,6 +197,9 @@ class Article(Base):
     )
     assignee_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("users.id"), nullable=True
+    )
+    signal_status: Mapped[SignalStatus] = mapped_column(
+        Enum(SignalStatus), default=SignalStatus.NOT_ASSESSED, index=True
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -324,6 +342,31 @@ class AuditEvent(Base):
     entity_type: Mapped[str] = mapped_column(String(64), index=True)
     entity_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+
+class Alert(Base):
+    """Persistent in-app alert for the pilot reviewer workspace."""
+
+    __tablename__ = "alerts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    article_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("articles.id"), nullable=True, index=True
+    )
+    alert_type: Mapped[str] = mapped_column(String(64), index=True)
+    priority: Mapped[str] = mapped_column(String(16), default="normal", index=True)
+    title: Mapped[str] = mapped_column(String(255))
+    message: Mapped[str] = mapped_column(Text)
+    dedupe_key: Mapped[Optional[str]] = mapped_column(
+        String(255), nullable=True, unique=True
+    )
+    read_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )

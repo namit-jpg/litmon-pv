@@ -18,6 +18,9 @@ AI-assisted, human-in-the-loop pipeline for systematic literature review (SLR), 
 - **AI screening** — product match, event relevance, ICSR criteria + reason tags  
   (mock heuristic offline; real LLM via OpenAI-compatible API)
 - **Triage queues** — Auto-Clear (with QC sample), Standard, Priority, Expedited + SLAs
+- **Omnichannel assignment pilot** — product reviewer routing, My Work, and reassignment
+- **Signal workflow** — human-controlled potential / confirmed / rejected signal status
+- **PV dashboard & alert inbox** — drill-through workload metrics and persistent in-app alerts
 - **Reviewer workspace** — article card, ICSR checklist, claim/override/second review/defer
 - **Archive & recall** — reversible, searchable
 - **Imports** — PMID list or CSV (backup if PubMed is down)

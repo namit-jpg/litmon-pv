@@ -21,6 +21,7 @@ from app.models import (
 )
 from app.models.entities import ArticleStatus, QueueType, SearchRunStatus
 from app.services.ai.scorer import score_article
+from app.services.alerts import create_alert
 from app.services.audit import log_event
 from app.services.pubmed.client import PubMedClient
 from app.services.pubmed.errors import PubMedError
@@ -102,7 +103,10 @@ async def run_search(
             existing = {
                 a.pmid: a
                 for a in db.scalars(
-                    select(Article).where(Article.pmid.in_(pmids))
+                    select(Article).where(
+                        Article.product_id == product.id,
+                        Article.pmid.in_(pmids),
+                    )
                 ).all()
             } if pmids else {}
 
@@ -184,6 +188,15 @@ async def run_search(
         run.status = SearchRunStatus.FAILED
         run.error_message = err_text
         run.completed_at = datetime.now(timezone.utc)
+        create_alert(
+            db,
+            user_id=product.primary_reviewer_id,
+            alert_type="search_failed",
+            priority="high",
+            title=f"Search failed for {product.name}",
+            message=err_text,
+            dedupe_key=f"search-failed:{run.id}",
+        )
         log_event(
             db,
             actor=triggered_by,
@@ -347,6 +360,18 @@ async def score_and_route_article(
     )
     db.add(triage)
     article.status = status
+    if status != ArticleStatus.AUTO_CLEAR and product.primary_reviewer_id:
+        article.assignee_id = product.primary_reviewer_id
+        create_alert(
+            db,
+            user_id=product.primary_reviewer_id,
+            article_id=article.id,
+            alert_type="work_assigned",
+            priority="high" if queue in (QueueType.EXPEDITED, QueueType.PRIORITY) else "normal",
+            title=f"{queue.value.replace('_', ' ').title()} literature review assigned",
+            message=article.title,
+            dedupe_key=f"assignment:{article.id}:{screening.id}",
+        )
     log_event(
         db,
         actor="system",
@@ -499,7 +524,12 @@ async def seed_demo_articles_async(db: Session, product: Product) -> list[Articl
     created: list[Article] = []
     names = product_name_list(product)
     for s in samples:
-        existing = db.scalars(select(Article).where(Article.pmid == s["pmid"])).first()
+        existing = db.scalars(
+            select(Article).where(
+                Article.product_id == product.id,
+                Article.pmid == s["pmid"],
+            )
+        ).first()
         if existing:
             created.append(existing)
             continue

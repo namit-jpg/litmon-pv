@@ -19,6 +19,7 @@ Obtain token via `POST /api/auth/login` (OAuth2 password form: `username` = emai
 |--------|------|------|-------------|
 | POST | `/api/auth/login` | No | Login; returns `{ access_token }` |
 | GET | `/api/auth/me` | Yes | Current user |
+| GET | `/api/users` | Yes | Active users for pilot assignment |
 
 Rate limit: 10 login attempts / 5 minutes per IP+email.
 
@@ -29,7 +30,7 @@ Rate limit: 10 login attempts / 5 minutes per IP+email.
 | Method | Path | Roles | Description |
 |--------|------|-------|-------------|
 | GET | `/api/products` | any | List monitored products |
-| PATCH | `/api/products/{id}` | pv_lead, admin | Update product synonyms etc. |
+| PATCH | `/api/products/{id}` | pv_lead, admin | Update product config and primary reviewer; reassigns open work |
 | GET | `/api/search-strings` | any | Versioned PubMed queries |
 | POST | `/api/search-strings` | pv_lead, admin | Create new active search string |
 | GET | `/api/search-runs` | any | Recent PubMed search runs |
@@ -55,7 +56,7 @@ CSV columns: `pmid` (required), `title`, `abstract`, `journal`, `doi`, `pub_date
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/articles` | Query: `queue`, `status`, `open_only`, `include_archive`, `overdue_only`, `q` |
+| GET | `/api/articles` | Query: `queue`, `status`, `product_id`, `mine_only`, `assignee_id`, `signal_status`, `open_only`, `include_archive`, `overdue_only`, `q` |
 | GET | `/api/articles/{id}` | Detail + screening + triage + decisions + audit |
 | POST | `/api/articles/{id}/claim` | Assign to current user |
 | POST | `/api/articles/{id}/review` | Decision (see actions below) |
@@ -70,6 +71,9 @@ CSV columns: `pmid` (required), `title`, `abstract`, `journal`, `doi`, `pub_date
 - `request_second_review`
 - `defer_full_text`
 - `recall_to_review`
+- `mark_potential_signal`
+- `confirm_signal` (senior reviewer, PV lead, or admin)
+- `reject_signal`
 
 Include explicit ICSR checklist booleans when confirming cases.
 
@@ -83,6 +87,17 @@ Include explicit ICSR checklist booleans when confirming cases.
 | GET | `/api/sla/overdue` | Past-SLA open articles |
 | GET | `/api/sla/summary` | Overdue rollup |
 | POST | `/api/sla/notify` | Enqueue SLA check job |
+
+---
+
+## Pilot dashboard and alerts
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/dashboard/summary?mine_only=true` | Assignment, signal, ICSR, overdue, and product counts |
+| GET | `/api/alerts?unread_only=true` | Current user's persistent in-app alerts |
+| POST | `/api/alerts/{id}/read` | Mark one alert read |
+| POST | `/api/alerts/read-all` | Mark all current-user alerts read |
 
 ---
 

@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased — Thursday pilot turnaround
+
+- Product-level primary reviewer and automatic assignment of reviewable literature
+- My Work/All Work queue scopes with product and signal filtering
+- Human-controlled potential/confirmed/rejected signal workflow
+- Persistent per-user alert inbox with assignment, signal, search-failure, and SLA events
+- PV dashboard with drill-through workload, signal, ICSR, overdue, and product counts
+- Alembic backfill for the default pilot reviewer and existing open articles
+- Product-scoped PMID uniqueness and deduplication for four-product monitoring
+- Targeted assignment/signal/alert tests and repaired frontend TypeScript build
+
 ## 0.2.1 — P0 real-data readiness (2026-07)
 
 ### PubMed live path

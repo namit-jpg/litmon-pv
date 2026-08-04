@@ -1,6 +1,7 @@
 from app.models.entities import (
     Article,
     ArticleAppearance,
+    Alert,
     AuditEvent,
     ExportPackage,
     Job,
@@ -20,6 +21,7 @@ __all__ = [
     "SearchRun",
     "Article",
     "ArticleAppearance",
+    "Alert",
     "ScreeningResult",
     "TriageAssignment",
     "ReviewDecision",

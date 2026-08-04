@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, EvalResult, ThresholdsConfig } from "../api";
+import { api, EvalResult, Product, ThresholdsConfig, User } from "../api";
 
 const DATE_PRESETS = [
   { label: "7 days", days: 7 },
@@ -27,9 +27,8 @@ const REAL_QUERY_EXAMPLES = [
 ] as const;
 
 export default function AdminPage() {
-  const [products, setProducts] = useState<
-    { id: number; name: string; synonyms: string[] }[]
-  >([]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
   const [strings, setStrings] = useState<
     {
       id: number;
@@ -53,24 +52,28 @@ export default function AdminPage() {
   const [searchDays, setSearchDays] = useState(30);
   const [maxFetch, setMaxFetch] = useState(20);
   const [selectedStringId, setSelectedStringId] = useState<number | "">("");
-  const [queryDraft, setQueryDraft] = useState(REAL_QUERY_EXAMPLES[0].query);
+  const [queryDraft, setQueryDraft] = useState<string>(
+    REAL_QUERY_EXAMPLES[0].query
+  );
   const [searchProductId, setSearchProductId] = useState<number | "">("");
   const [queryNotes, setQueryNotes] = useState("Live pilot search string");
 
   async function refresh() {
     try {
-      const [p, s, r, ex, th] = await Promise.all([
+      const [p, s, r, ex, th, u] = await Promise.all([
         api.products(),
         api.searchStrings(),
         api.searchRuns(),
         api.exports(),
         api.thresholds(),
+        api.users(),
       ]);
       setProducts(p);
       setStrings(s);
       setRuns(r);
       setExports(ex);
       setThresholds(th);
+      setUsers(u);
       // Prefer real pilot product over SLA test junk
       const preferred =
         p.find((x) => /DrugX|Pilot/i.test(x.name)) || p[p.length - 1] || p[0];
@@ -657,17 +660,42 @@ export default function AdminPage() {
       </section>
 
       <section className="card">
-        <h2>Products</h2>
-        <ul>
+        <h2>Product assignment</h2>
+        <p className="muted">
+          New reviewable literature is automatically assigned to the product's primary reviewer.
+        </p>
+        <div className="product-assignment-list">
           {products.map((p) => (
-            <li key={p.id}>
-              #{p.id} {p.name}{" "}
-              <span className="muted">
-                synonyms: {(p.synonyms || []).join(", ")}
-              </span>
-            </li>
+            <div className="product-assignment-row" key={p.id}>
+              <div>
+                <strong>{p.name}</strong>
+                <div className="muted">
+                  {(p.inn ? `${p.inn} · ` : "")}
+                  synonyms: {(p.synonyms || []).join(", ") || "none"}
+                </div>
+              </div>
+              <select
+                value={p.primary_reviewer_id || ""}
+                onChange={(e) => {
+                  const primary_reviewer_id = e.target.value
+                    ? Number(e.target.value)
+                    : null;
+                  wrap(async () => {
+                    await api.updateProduct(p.id, { primary_reviewer_id });
+                    setMsg(`Primary reviewer updated for ${p.name}`);
+                  });
+                }}
+              >
+                <option value="">Unassigned</option>
+                {users.map((user) => (
+                  <option value={user.id} key={user.id}>
+                    {user.full_name} ({user.role})
+                  </option>
+                ))}
+              </select>
+            </div>
           ))}
-        </ul>
+        </div>
       </section>
 
       <section className="card">

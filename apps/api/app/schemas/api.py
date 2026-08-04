@@ -11,6 +11,7 @@ from app.models.entities import (
     QueueType,
     Role,
     SearchRunStatus,
+    SignalStatus,
 )
 
 
@@ -41,6 +42,7 @@ class ProductOut(BaseModel):
     synonyms: list[Any]
     atc_code: Optional[str]
     is_active: bool
+    primary_reviewer_id: Optional[int] = None
 
     model_config = {"from_attributes": True}
 
@@ -52,6 +54,7 @@ class ProductUpdate(BaseModel):
     synonyms: Optional[list[Any]] = None
     atc_code: Optional[str] = None
     is_active: Optional[bool] = None
+    primary_reviewer_id: Optional[int] = None
 
 
 class SearchStringOut(BaseModel):
@@ -169,6 +172,7 @@ class ArticleListItem(BaseModel):
     sla_due_at: Optional[datetime] = None
     hard_rule_triggered: bool = False
     assignee_id: Optional[int] = None
+    signal_status: SignalStatus = SignalStatus.NOT_ASSESSED
 
     model_config = {"from_attributes": True}
 
@@ -188,6 +192,7 @@ class ArticleDetail(BaseModel):
     status: ArticleStatus
     product_id: int
     assignee_id: Optional[int]
+    signal_status: SignalStatus = SignalStatus.NOT_ASSESSED
     latest_screening: Optional[ScreeningOut] = None
     active_triage: Optional[TriageOut] = None
     decisions: list[Any] = []
@@ -290,3 +295,17 @@ class ThresholdsOut(BaseModel):
     fail_open_on_llm_error: bool = True
     ncbi_email_configured: bool = False
     ncbi_api_key_configured: bool = False
+
+
+class AlertOut(BaseModel):
+    id: int
+    user_id: int
+    article_id: Optional[int]
+    alert_type: str
+    priority: str
+    title: str
+    message: str
+    read_at: Optional[datetime]
+    created_at: datetime
+
+    model_config = {"from_attributes": True}

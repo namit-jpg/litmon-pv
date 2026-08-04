@@ -37,6 +37,11 @@ def bootstrap() -> None:
                     )
                 )
 
+        db.flush()
+        default_reviewer = db.scalars(
+            select(User).where(User.email == "reviewer@litmon.local")
+        ).first()
+
         product = db.scalars(
             select(Product).where(Product.name == "DrugX (Pilot)")
         ).first()
@@ -60,6 +65,8 @@ def bootstrap() -> None:
                 notes="Pilot search string — align with manual process before parallel run",
             )
             db.add(ss)
+        if product and not product.primary_reviewer_id and default_reviewer:
+            product.primary_reviewer_id = default_reviewer.id
 
         log_event(
             db,

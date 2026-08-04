@@ -47,13 +47,15 @@ def run_migrations(engine) -> str:
         inspector = inspect(engine)
         tables = set(inspector.get_table_names())
         if tables and "alembic_version" not in tables:
-            # Pre-Alembic pilot DB: mark current schema as head
+            # Pre-Alembic pilot DBs match the original generated baseline.
+            # Stamp that baseline, then apply every newer pilot migration.
             logger.info(
-                "Existing tables without alembic_version — stamping head (%d tables)",
+                "Existing tables without alembic_version — stamping baseline and upgrading (%d tables)",
                 len(tables),
             )
-            command.stamp(cfg, "head")
-            return "stamp_head"
+            command.stamp(cfg, "7611f1d89eaa")
+            command.upgrade(cfg, "head")
+            return "stamp_baseline_upgrade_head"
 
         command.upgrade(cfg, "head")
         return "upgrade_head"

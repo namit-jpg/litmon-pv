@@ -69,7 +69,12 @@ async def import_pmids_from_pubmed(
     names = product_name_list(product)
     existing = {
         a.pmid: a
-        for a in db.scalars(select(Article).where(Article.pmid.in_(pmids))).all()
+        for a in db.scalars(
+            select(Article).where(
+                Article.product_id == product.id,
+                Article.pmid.in_(pmids),
+            )
+        ).all()
     } if pmids else {}
     new_pmids = [p for p in pmids if p not in existing]
     rehit = len(pmids) - len(new_pmids)
@@ -152,7 +157,12 @@ async def import_csv_rows(
 
     for r in rows:
         pmid = str(r["pmid"]).strip()
-        existing = db.scalars(select(Article).where(Article.pmid == pmid)).first()
+        existing = db.scalars(
+            select(Article).where(
+                Article.product_id == product.id,
+                Article.pmid == pmid,
+            )
+        ).first()
         if existing:
             skipped += 1
             article_ids.append(existing.id)
