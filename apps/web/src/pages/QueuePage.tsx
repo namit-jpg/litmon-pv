@@ -226,6 +226,7 @@ export default function QueuePage() {
               <th>Score</th>
               <th>PMID</th>
               <th>Title</th>
+              <th>Assignee</th>
               <th>Flags</th>
               <th>Signal</th>
             </tr>
@@ -257,6 +258,13 @@ export default function QueuePage() {
                 <td>{a.pmid}</td>
                 <td>
                   <Link to={`/articles/${a.id}`}>{a.title}</Link>
+                </td>
+                <td>
+                  {a.assignee_name ? (
+                    <span className="pill">{a.assignee_name}</span>
+                  ) : (
+                    <span className="pill danger">Unassigned triage</span>
+                  )}
                 </td>
                 <td>
                   {a.hard_rule_triggered && (

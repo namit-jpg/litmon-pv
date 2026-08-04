@@ -22,6 +22,7 @@ from app.models import (
 from app.models.entities import ArticleStatus, QueueType, SearchRunStatus
 from app.services.ai.scorer import score_article
 from app.services.alerts import create_alert
+from app.services.omnichannel import route_article
 from app.services.audit import log_event
 from app.services.pubmed.client import PubMedClient
 from app.services.pubmed.errors import PubMedError
@@ -360,17 +361,31 @@ async def score_and_route_article(
     )
     db.add(triage)
     article.status = status
-    if status != ArticleStatus.AUTO_CLEAR and product.primary_reviewer_id:
-        article.assignee_id = product.primary_reviewer_id
-        create_alert(
+    if status != ArticleStatus.AUTO_CLEAR:
+        assignee, routing_reason = route_article(db, product=product, article=article)
+        article.assignee_id = assignee.id if assignee else None
+        if assignee:
+            create_alert(
+                db,
+                user_id=assignee.id,
+                article_id=article.id,
+                alert_type="work_assigned",
+                priority="high" if queue in (QueueType.EXPEDITED, QueueType.PRIORITY) else "normal",
+                title=f"{queue.value.replace('_', ' ').title()} literature review assigned",
+                message=article.title,
+                dedupe_key=f"assignment:{article.id}:{screening.id}",
+            )
+        log_event(
             db,
-            user_id=product.primary_reviewer_id,
-            article_id=article.id,
-            alert_type="work_assigned",
-            priority="high" if queue in (QueueType.EXPEDITED, QueueType.PRIORITY) else "normal",
-            title=f"{queue.value.replace('_', ' ').title()} literature review assigned",
-            message=article.title,
-            dedupe_key=f"assignment:{article.id}:{screening.id}",
+            actor="system",
+            action="omni_work_routed",
+            entity_type="article",
+            entity_id=article.id,
+            payload={
+                "assignee_id": assignee.id if assignee else None,
+                "routing_reason": routing_reason,
+                "queue": queue.value,
+            },
         )
     log_event(
         db,
@@ -472,32 +487,36 @@ def recall_article_to_review(
 
 
 async def seed_demo_articles_async(db: Session, product: Product) -> list[Article]:
+    # Keep the demo records product-aware so the walkthrough works for any of
+    # the four seeded products instead of showing the retired DrugX placeholder.
+    drug = product.inn or product.name
+    brand = (product.brands or [drug])[0]
     samples: list[dict[str, Any]] = [
         {
             "pmid": "90000001",
-            "title": "Fatal hepatotoxicity associated with DrugX in a 67-year-old woman: a case report",
+            "title": f"Fatal hepatotoxicity associated with {brand} in a 67-year-old woman: a case report",
             "abstract": (
                 "We report a 67-year-old woman who developed acute liver failure and death "
-                "after exposure to DrugX for hypertension. Authors describe the adverse reaction "
+                f"after exposure to {drug} for hypertension. Authors describe the adverse reaction "
                 "and hospital course. This case suggests a possible drug-induced liver injury."
             ),
             "journal": "Demo Journal of Drug Safety",
         },
         {
             "pmid": "90000002",
-            "title": "Efficacy of DrugX in phase III hypertension trial",
+            "title": f"Efficacy of {brand} in phase III hypertension trial",
             "abstract": (
-                "A randomized controlled trial of DrugX versus placebo demonstrated significant "
+                f"A randomized controlled trial of {drug} versus placebo demonstrated significant "
                 "blood pressure reduction. Safety was similar between arms with mild headache only. "
-                "No serious adverse events related to DrugX were observed."
+                f"No serious adverse events related to {drug} were observed."
             ),
             "journal": "Demo Cardiology",
         },
         {
             "pmid": "90000003",
-            "title": "Pregnancy outcome after first-trimester DrugX exposure: case series",
+            "title": f"Pregnancy outcome after first-trimester {brand} exposure: case series",
             "abstract": (
-                "We describe three pregnant patients exposed to DrugX during the first trimester. "
+                f"We describe three pregnant patients exposed to {drug} during the first trimester. "
                 "One neonate had congenital anomaly. Reporter is the treating obstetrician."
             ),
             "journal": "Demo Reproductive Toxicology",
@@ -513,9 +532,9 @@ async def seed_demo_articles_async(db: Session, product: Product) -> list[Articl
         },
         {
             "pmid": "90000005",
-            "title": "Anaphylaxis in a child following DrugX administration",
+            "title": f"Anaphylaxis in a child following {brand} administration",
             "abstract": (
-                "A 9-year-old boy developed anaphylaxis minutes after DrugX infusion. "
+                f"A 9-year-old boy developed anaphylaxis minutes after {drug} infusion. "
                 "The pediatric team reports successful treatment with epinephrine."
             ),
             "journal": "Demo Pediatrics",

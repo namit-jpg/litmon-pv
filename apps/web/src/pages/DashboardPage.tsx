@@ -24,6 +24,7 @@ export default function DashboardPage() {
   const cards = summary
     ? [
         ["Awaiting review", summary.awaiting_review, `/?${scope}&tab=all`],
+        ["Unassigned triage", summary.unassigned, "/?view=all&tab=all"],
         ["Potential signals", summary.potential_signals, `/?${scope}&signal_status=potential_signal`],
         ["Confirmed signals", summary.confirmed_signals, `/?${scope}&signal_status=confirmed_signal`],
         ["Valid ICSR", summary.valid_icsr, `/?${scope}&status=disposition_valid_icsr`],

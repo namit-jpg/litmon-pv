@@ -93,6 +93,35 @@ a:hover {
   font-size: 0.9rem;
 }
 
+.presence-control {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+.presence-control select {
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.presence-control option {
+  color: #111827;
+}
+.presence-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.presence-dot.available { background: var(--accent-2); }
+.presence-dot.busy { background: var(--warn); }
+.presence-dot.offline { background: var(--muted); }
+.presence-capacity { color: var(--muted); }
+
 .main {
   max-width: 1280px;
   margin: 0 auto;

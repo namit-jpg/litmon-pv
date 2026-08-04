@@ -1,5 +1,7 @@
+import { useEffect, useState } from "react";
 import { Link, Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import { useAuth } from "./auth";
+import { api, Presence } from "./api";
 import LoginPage from "./pages/LoginPage";
 import QueuePage from "./pages/QueuePage";
 import ArticlePage from "./pages/ArticlePage";
@@ -10,6 +12,46 @@ import OpsPage from "./pages/OpsPage";
 import SearchRunPage from "./pages/SearchRunPage";
 import DashboardPage from "./pages/DashboardPage";
 import AlertsBar from "./components/AlertsBar";
+
+function PresenceControl() {
+  const [presence, setPresence] = useState<Presence | null>(null);
+  useEffect(() => {
+    let active = true;
+    const load = () =>
+      api.presence().then((p) => active && setPresence(p)).catch(() => undefined);
+    load();
+    const timer = window.setInterval(load, 15000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, []);
+  if (!presence) return null;
+  return (
+    <div className="presence-control" title="Omni-style routing presence and capacity">
+      <span className={`presence-dot ${presence.status}`} />
+      <select
+        aria-label="Reviewer presence"
+        value={presence.status}
+        onChange={async (event) => {
+          const next = event.target.value as Presence["status"];
+          try {
+            setPresence(await api.updatePresence(next));
+          } catch {
+            // Keep the last known state during a transient pilot API failure.
+          }
+        }}
+      >
+        <option value="available">Available</option>
+        <option value="busy">Busy</option>
+        <option value="offline">Offline</option>
+      </select>
+      <span className="presence-capacity">
+        {presence.active_work_count}/{presence.capacity_limit}
+      </span>
+    </div>
+  );
+}
 
 function Shell({ children }: { children: React.ReactNode }) {
   const { user, logout } = useAuth();
@@ -30,6 +72,7 @@ function Shell({ children }: { children: React.ReactNode }) {
           <Link to="/admin">Admin</Link>
         </nav>
         <AlertsBar />
+        <PresenceControl />
         <div className="userbox">
           <span>
             {user?.full_name} ({user?.role})

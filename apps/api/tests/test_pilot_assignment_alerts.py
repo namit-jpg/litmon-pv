@@ -8,10 +8,11 @@ import app.models  # noqa: F401
 from app.api.routes import submit_review, update_product
 from app.core.database import Base
 from app.models import Alert, Article, Product, User
-from app.models.entities import ArticleStatus, Role, SignalStatus
+from app.models.entities import ArticleStatus, PresenceStatus, Role, SignalStatus
 from app.schemas.api import ProductUpdate, ReviewIn
 from app.services.alerts import create_alert, mark_alert_read
 from app.services.pipeline import score_and_route_article
+from app.services.omnichannel import route_article
 
 
 def session():
@@ -177,6 +178,63 @@ def test_product_reviewer_change_reassigns_open_work():
     assert db.scalars(
         select(Alert).where(Alert.article_id == article.id, Alert.user_id == reviewer.id)
     ).first()
+
+
+def test_omni_routes_primary_when_available_and_falls_back_when_busy():
+    db = session()
+    primary = User(
+        email="omni-primary@example.com",
+        full_name="Omni Primary",
+        hashed_password="unused",
+        role=Role.REVIEWER,
+        capacity_limit=1,
+    )
+    fallback = User(
+        email="omni-fallback@example.com",
+        full_name="Omni Fallback",
+        hashed_password="unused",
+        role=Role.SENIOR_REVIEWER,
+    )
+    db.add_all([primary, fallback])
+    db.flush()
+    product = Product(name="Omni Product", primary_reviewer_id=primary.id)
+    db.add(product)
+    db.flush()
+    first = Article(product_id=product.id, pmid="omni-1", title="First", status=ArticleStatus.ROUTED)
+    db.add(first)
+    db.flush()
+
+    assignee, reason = route_article(db, product=product, article=first)
+    assert assignee is primary
+    assert reason == "primary_reviewer"
+
+    primary.presence_status = PresenceStatus.BUSY
+    second = Article(product_id=product.id, pmid="omni-2", title="Second", status=ArticleStatus.ROUTED)
+    db.add(second)
+    db.flush()
+    assignee, reason = route_article(db, product=product, article=second)
+    assert assignee is fallback
+    assert reason == "least_loaded_available"
+
+
+def test_omni_leaves_work_unassigned_when_everyone_unavailable():
+    db = session()
+    reviewer = User(
+        email="omni-busy@example.com",
+        full_name="Busy Reviewer",
+        hashed_password="unused",
+        role=Role.REVIEWER,
+        presence_status=PresenceStatus.BUSY,
+    )
+    db.add(reviewer)
+    db.flush()
+    product = Product(name="No Capacity Product", primary_reviewer_id=reviewer.id)
+    article = Article(product=product, pmid="omni-3", title="Third", status=ArticleStatus.ROUTED)
+    db.add(article)
+    db.flush()
+    assignee, reason = route_article(db, product=product, article=article)
+    assert assignee is None
+    assert reason == "no_available_capacity"
 
 
 def test_same_pmid_can_be_monitored_for_two_products():

@@ -49,6 +49,17 @@ export type User = {
   email: string;
   full_name: string;
   role: string;
+  presence_status: "offline" | "available" | "busy";
+  capacity_limit: number;
+  active_work_count: number;
+};
+
+export type Presence = {
+  user_id: number;
+  status: "offline" | "available" | "busy";
+  capacity_limit: number;
+  active_work_count: number;
+  available_capacity: number;
 };
 
 export type Product = {
@@ -77,6 +88,7 @@ export type DashboardSummary = {
   scope: string;
   total_articles: number;
   awaiting_review: number;
+  unassigned: number;
   potential_signals: number;
   confirmed_signals: number;
   valid_icsr: number;
@@ -112,6 +124,7 @@ export type ArticleListItem = {
   sla_due_at?: string;
   hard_rule_triggered: boolean;
   assignee_id?: number;
+  assignee_name?: string;
   signal_status: string;
 };
 
@@ -238,6 +251,12 @@ export const api = {
   },
   me: () => request<User>("/api/auth/me"),
   users: () => request<User[]>("/api/users"),
+  presence: () => request<Presence>("/api/presence"),
+  updatePresence: (status: Presence["status"]) =>
+    request<Presence>("/api/presence", {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
+    }),
   queueStats: (mineOnly = false) =>
     request<QueueStats>(`/api/queues/stats${mineOnly ? "?mine_only=true" : ""}`),
   articles: (opts?: {

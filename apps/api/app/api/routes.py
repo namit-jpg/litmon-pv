@@ -33,6 +33,7 @@ from app.models.entities import (
     QueueType,
     Role,
     SignalStatus,
+    PresenceStatus,
 )
 from app.schemas.api import (
     ArticleDetail,
@@ -61,6 +62,7 @@ from app.schemas.api import (
 )
 from app.services.audit import log_event
 from app.services.alerts import create_alert, mark_alert_read
+from app.services.omnichannel import active_work_count, route_article
 from app.services.evaluation import evaluate_gold_set
 from app.services.export_service import create_icsr_export, create_parallel_run_export
 from app.services.import_service import (
@@ -139,10 +141,60 @@ def me(user: User = Depends(get_current_user)) -> User:
 def list_users(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
-) -> list[User]:
-    return list(
+) -> list[UserOut]:
+    users = list(
         db.scalars(select(User).where(User.is_active.is_(True)).order_by(User.full_name)).all()
     )
+    return [
+        UserOut(
+            id=u.id,
+            email=u.email,
+            full_name=u.full_name,
+            role=u.role,
+            presence_status=u.presence_status,
+            capacity_limit=u.capacity_limit,
+            active_work_count=active_work_count(db, u.id),
+        )
+        for u in users
+    ]
+
+
+class PresenceUpdate(BaseModel):
+    status: PresenceStatus
+
+
+@router.get("/presence")
+def get_presence(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    return {
+        "user_id": user.id,
+        "status": user.presence_status.value,
+        "capacity_limit": user.capacity_limit,
+        "active_work_count": active_work_count(db, user.id),
+        "available_capacity": max((user.capacity_limit or 20) - active_work_count(db, user.id), 0),
+    }
+
+
+@router.patch("/presence")
+def update_presence(
+    body: PresenceUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    previous = user.presence_status
+    user.presence_status = body.status
+    log_event(
+        db,
+        actor=user.email,
+        action="presence_changed",
+        entity_type="user",
+        entity_id=user.id,
+        payload={"previous": previous.value, "current": body.status.value},
+    )
+    db.commit()
+    return get_presence(db=db, user=user)
 
 
 # ── Config / thresholds ───────────────────────────────────────────────
@@ -198,7 +250,13 @@ def list_products(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ) -> list[Product]:
-    return list(db.scalars(select(Product).order_by(Product.name)).all())
+    return list(
+        db.scalars(
+            select(Product)
+            .where(Product.is_active.is_(True))
+            .order_by(Product.name)
+        ).all()
+    )
 
 
 @router.patch("/products/{product_id}", response_model=ProductOut)
@@ -236,19 +294,22 @@ def update_product(
             ).all()
         )
         for article in open_articles:
-            if article.assignee_id == reviewer_id:
+            assignee, routing_reason = route_article(
+                db, product=product, article=article
+            )
+            if article.assignee_id == (assignee.id if assignee else None):
                 continue
-            article.assignee_id = reviewer_id
+            article.assignee_id = assignee.id if assignee else None
             reassigned += 1
             create_alert(
                 db,
-                user_id=reviewer_id,
+                user_id=assignee.id if assignee else None,
                 article_id=article.id,
                 alert_type="work_assigned",
                 priority="normal",
                 title=f"{product.name} review assigned",
-                message=article.title,
-                dedupe_key=f"product-reassignment:{article.id}:{reviewer_id}",
+                message=f"{article.title} ({routing_reason.replace('_', ' ')})",
+                dedupe_key=f"product-reassignment:{article.id}:{assignee.id if assignee else 'unassigned'}",
             )
     log_event(
         db,
@@ -646,6 +707,15 @@ def list_articles(
 
     articles = list(db.scalars(query.order_by(Article.id.desc()).limit(300)).all())
     items: list[ArticleListItem] = []
+    assignee_ids = {a.assignee_id for a in articles if a.assignee_id is not None}
+    assignee_names = (
+        {
+            u.id: u.full_name
+            for u in db.scalars(select(User).where(User.id.in_(assignee_ids))).all()
+        }
+        if assignee_ids
+        else {}
+    )
     now = datetime.now(timezone.utc)
     for a in articles:
         triage = next((t for t in a.triage_assignments if t.is_active), None)
@@ -676,6 +746,7 @@ def list_articles(
                 sla_due_at=triage.sla_due_at if triage else None,
                 hard_rule_triggered=bool(triage and triage.hard_rule_triggered),
                 assignee_id=a.assignee_id,
+                assignee_name=assignee_names.get(a.assignee_id) if a.assignee_id else None,
                 signal_status=a.signal_status,
             )
         )
@@ -959,6 +1030,9 @@ def dashboard_summary(
         "scope": "mine" if mine_only else "all",
         "total_articles": count_where(),
         "awaiting_review": count_where(Article.status.in_(open_statuses)),
+        "unassigned": count_where(
+            Article.status.in_(open_statuses), Article.assignee_id.is_(None)
+        ),
         "potential_signals": count_where(Article.signal_status == SignalStatus.POTENTIAL),
         "confirmed_signals": count_where(Article.signal_status == SignalStatus.CONFIRMED),
         "valid_icsr": count_where(Article.status == ArticleStatus.DISPOSITION_VALID_ICSR),

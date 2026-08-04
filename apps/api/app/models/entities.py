@@ -30,6 +30,12 @@ class Role(str, enum.Enum):
     ADMIN = "admin"
 
 
+class PresenceStatus(str, enum.Enum):
+    OFFLINE = "offline"
+    AVAILABLE = "available"
+    BUSY = "busy"
+
+
 class SearchRunStatus(str, enum.Enum):
     PENDING = "pending"
     RUNNING = "running"
@@ -93,6 +99,10 @@ class User(Base):
     hashed_password: Mapped[str] = mapped_column(String(255))
     role: Mapped[Role] = mapped_column(Enum(Role), default=Role.REVIEWER)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    presence_status: Mapped[PresenceStatus] = mapped_column(
+        Enum(PresenceStatus), default=PresenceStatus.AVAILABLE, index=True
+    )
+    capacity_limit: Mapped[int] = mapped_column(Integer, default=20)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

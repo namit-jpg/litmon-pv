@@ -94,10 +94,12 @@ Include explicit ICSR checklist booleans when confirming cases.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/dashboard/summary?mine_only=true` | Assignment, signal, ICSR, overdue, and product counts |
+| GET | `/api/dashboard/summary?mine_only=true` | Assignment, unassigned triage, signal, ICSR, overdue, and product counts |
 | GET | `/api/alerts?unread_only=true` | Current user's persistent in-app alerts |
 | POST | `/api/alerts/{id}/read` | Mark one alert read |
 | POST | `/api/alerts/read-all` | Mark all current-user alerts read |
+| GET | `/api/presence` | Current reviewer presence, active work, and capacity |
+| PATCH | `/api/presence` | Set current reviewer to `available`, `busy`, or `offline` |
 
 ---
 

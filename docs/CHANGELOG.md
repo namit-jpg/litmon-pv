@@ -7,6 +7,7 @@
 - Human-controlled potential/confirmed/rejected signal workflow
 - Persistent per-user alert inbox with assignment, signal, search-failure, and SLA events
 - PV dashboard with drill-through workload, signal, ICSR, overdue, and product counts
+- Service Cloud-style pilot routing: reviewer presence, capacity, primary-reviewer preference, least-loaded fallback, and an unassigned triage state
 - Alembic backfill for the default pilot reviewer and existing open articles
 - Product-scoped PMID uniqueness and deduplication for four-product monitoring
 - Targeted assignment/signal/alert tests and repaired frontend TypeScript build

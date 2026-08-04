@@ -12,6 +12,7 @@ from app.models.entities import (
     Role,
     SearchRunStatus,
     SignalStatus,
+    PresenceStatus,
 )
 
 
@@ -27,9 +28,13 @@ class LoginIn(BaseModel):
 
 class UserOut(BaseModel):
     id: int
-    email: EmailStr
+    # Pilot users intentionally use the reserved .local domain.
+    email: str
     full_name: str
     role: Role
+    presence_status: PresenceStatus = PresenceStatus.AVAILABLE
+    capacity_limit: int = 20
+    active_work_count: int = 0
 
     model_config = {"from_attributes": True}
 
@@ -172,6 +177,7 @@ class ArticleListItem(BaseModel):
     sla_due_at: Optional[datetime] = None
     hard_rule_triggered: bool = False
     assignee_id: Optional[int] = None
+    assignee_name: Optional[str] = None
     signal_status: SignalStatus = SignalStatus.NOT_ASSESSED
 
     model_config = {"from_attributes": True}

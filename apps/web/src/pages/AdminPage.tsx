@@ -20,9 +20,14 @@ const REAL_QUERY_EXAMPLES = [
       '(metformin) AND ("case report" OR adverse OR lactic OR toxicity) AND humans[MeSH Terms]',
   },
   {
-    label: "DrugX pilot (demo only — 0 live hits)",
+    label: "Amoxicillin allergy",
     query:
-      '("DrugX" OR drugxanib OR "DX-101") AND (adverse OR safety OR toxicity OR "case report")',
+      '(amoxicillin OR Amoxil) AND (allergy OR anaphylaxis OR adverse OR "case report")',
+  },
+  {
+    label: "Atorvastatin muscle injury",
+    query:
+      '(atorvastatin OR Lipitor) AND (myopathy OR rhabdomyolysis OR adverse OR "case report")',
   },
 ] as const;
 
@@ -44,7 +49,7 @@ export default function AdminPage() {
   const [thresholds, setThresholds] = useState<ThresholdsConfig | null>(null);
   const [pmids, setPmids] = useState("");
   const [csvText, setCsvText] = useState(
-    "pmid,title,abstract,journal\n90000010,DrugX rash case report,We report a patient with rash after DrugX.,Demo Journal\n"
+    "pmid,title,abstract,journal\n90000010,Ibuprofen rash case report,We report a patient with rash after ibuprofen.,Demo Journal\n"
   );
   const [msg, setMsg] = useState("");
   const [error, setError] = useState("");
@@ -74,9 +79,9 @@ export default function AdminPage() {
       setExports(ex);
       setThresholds(th);
       setUsers(u);
-      // Prefer real pilot product over SLA test junk
+      // Prefer the first seeded pilot product for a predictable walkthrough.
       const preferred =
-        p.find((x) => /DrugX|Pilot/i.test(x.name)) || p[p.length - 1] || p[0];
+        p.find((x) => x.name === "Ibuprofen") || p[0] || p[p.length - 1];
       if (searchProductId === "" && preferred) {
         setSearchProductId(preferred.id);
       }
@@ -105,7 +110,7 @@ export default function AdminPage() {
   const productId =
     typeof searchProductId === "number"
       ? searchProductId
-      : products.find((x) => /DrugX|Pilot/i.test(x.name))?.id ||
+      : products.find((x) => x.name === "Ibuprofen")?.id ||
         products[products.length - 1]?.id;
   const activeStringId =
     typeof selectedStringId === "number"
@@ -260,9 +265,9 @@ export default function AdminPage() {
       <section className="card">
         <h2>PubMed search string (editable)</h2>
         <p className="muted">
-          The default DrugX query is <strong>fictional</strong> and returns 0
-          live hits. Edit the query below, save a new version, then run search.
-          Saving creates a versioned string (old ones stay for audit).
+          The four pilot products and starter queries are pre-seeded. Edit a
+          query below, save a new version, then run search. Saving creates a
+          versioned string (old ones stay for audit).
         </p>
         {!thresholds?.ncbi_email_configured && (
           <div className="warn-banner">
@@ -488,8 +493,8 @@ export default function AdminPage() {
           </button>
         </div>
         <p className="hint">
-          Tip: use the ibuprofen example + 30 days to see real hits. DrugX
-          always returns 0 on live PubMed.
+          Tip: use the ibuprofen example + 30 days to see real hits. Demo seed
+          data is available when live PubMed is not configured.
         </p>
       </section>
 
