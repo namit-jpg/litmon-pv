@@ -20,6 +20,19 @@ target_metadata = Base.metadata
 
 
 def get_url() -> str:
+    """Resolve the target database URL.
+
+    An explicit override from the caller wins so that programmatic callers
+    (``run_migrations``) and ``alembic -x db_url=...`` actually target the
+    database they asked for. Otherwise fall back to application settings —
+    never the ``alembic.ini`` placeholder.
+    """
+    x_args = context.get_x_argument(as_dictionary=True)
+    if x_args.get("db_url"):
+        return x_args["db_url"]
+    override = config.attributes.get("db_url")
+    if override:
+        return str(override)
     return get_settings().database_url
 
 

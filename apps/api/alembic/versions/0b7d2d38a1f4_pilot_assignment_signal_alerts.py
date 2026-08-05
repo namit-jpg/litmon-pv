@@ -15,40 +15,90 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+def _columns(bind, table: str) -> set:
+    return {c["name"] for c in sa.inspect(bind).get_columns(table)}
+
+
+def _backfill() -> None:
+    """Preserve a useful demo immediately after upgrade.
+
+    The bootstrap user is the pilot default; Admin can change each product
+    assignment in the UI. Both statements are ``WHERE ... IS NULL`` guarded so
+    re-running them is a no-op.
+    """
+    op.execute(
+        sa.text(
+            "UPDATE products SET primary_reviewer_id = "
+            "(SELECT id FROM users WHERE email = 'reviewer@litmon.local' LIMIT 1) "
+            "WHERE primary_reviewer_id IS NULL"
+        )
+    )
+    op.execute(
+        sa.text(
+            "UPDATE articles SET assignee_id = "
+            "(SELECT primary_reviewer_id FROM products WHERE products.id = articles.product_id) "
+            "WHERE assignee_id IS NULL AND status NOT IN "
+            "('AUTO_CLEAR', 'DISPOSITION_NOT_CASE', 'DISPOSITION_VALID_ICSR')"
+        )
+    )
+
+
 def upgrade() -> None:
-    if op.get_bind().dialect.name == "postgresql":
+    # Pilot laptops may already have parts of this schema: bootstrap used to
+    # call ``create_all``, which adds new *tables* (alerts) but never adds new
+    # *columns*. Every step below is therefore guarded so such a hybrid
+    # database can still upgrade instead of dying on "already exists".
+    bind = op.get_bind()
+
+    if bind.dialect.name == "postgresql":
         op.execute("ALTER TYPE decisionaction ADD VALUE IF NOT EXISTS 'MARK_POTENTIAL_SIGNAL'")
         op.execute("ALTER TYPE decisionaction ADD VALUE IF NOT EXISTS 'CONFIRM_SIGNAL'")
         op.execute("ALTER TYPE decisionaction ADD VALUE IF NOT EXISTS 'REJECT_SIGNAL'")
 
-    with op.batch_alter_table("articles") as batch_op:
-        batch_op.drop_constraint("uq_articles_pmid", type_="unique")
-        batch_op.create_unique_constraint(
-            "uq_articles_product_pmid", ["product_id", "pmid"]
-        )
-    with op.batch_alter_table("products") as batch_op:
-        batch_op.add_column(sa.Column("primary_reviewer_id", sa.Integer(), nullable=True))
-        batch_op.create_foreign_key(
-            "fk_products_primary_reviewer", "users", ["primary_reviewer_id"], ["id"]
-        )
-        batch_op.create_index("ix_products_primary_reviewer_id", ["primary_reviewer_id"])
-
-    with op.batch_alter_table("articles") as batch_op:
-        batch_op.add_column(
-            sa.Column(
-                "signal_status",
-                sa.Enum(
-                    "NOT_ASSESSED",
-                    "POTENTIAL",
-                    "CONFIRMED",
-                    "REJECTED",
-                    name="signalstatus",
-                ),
-                nullable=False,
-                server_default="NOT_ASSESSED",
+    article_uniques = {
+        u["name"] for u in sa.inspect(bind).get_unique_constraints("articles")
+    }
+    if "uq_articles_product_pmid" not in article_uniques:
+        with op.batch_alter_table("articles") as batch_op:
+            if "uq_articles_pmid" in article_uniques:
+                batch_op.drop_constraint("uq_articles_pmid", type_="unique")
+            batch_op.create_unique_constraint(
+                "uq_articles_product_pmid", ["product_id", "pmid"]
             )
-        )
-        batch_op.create_index("ix_articles_signal_status", ["signal_status"])
+
+    if "primary_reviewer_id" not in _columns(bind, "products"):
+        with op.batch_alter_table("products") as batch_op:
+            batch_op.add_column(
+                sa.Column("primary_reviewer_id", sa.Integer(), nullable=True)
+            )
+            batch_op.create_foreign_key(
+                "fk_products_primary_reviewer", "users", ["primary_reviewer_id"], ["id"]
+            )
+            batch_op.create_index(
+                "ix_products_primary_reviewer_id", ["primary_reviewer_id"]
+            )
+
+    if "signal_status" not in _columns(bind, "articles"):
+        with op.batch_alter_table("articles") as batch_op:
+            batch_op.add_column(
+                sa.Column(
+                    "signal_status",
+                    sa.Enum(
+                        "NOT_ASSESSED",
+                        "POTENTIAL",
+                        "CONFIRMED",
+                        "REJECTED",
+                        name="signalstatus",
+                    ),
+                    nullable=False,
+                    server_default="NOT_ASSESSED",
+                )
+            )
+            batch_op.create_index("ix_articles_signal_status", ["signal_status"])
+
+    if "alerts" in sa.inspect(bind).get_table_names():
+        _backfill()
+        return
 
     op.create_table(
         "alerts",
@@ -75,23 +125,7 @@ def upgrade() -> None:
     op.create_index("ix_alerts_read_at", "alerts", ["read_at"])
     op.create_index("ix_alerts_created_at", "alerts", ["created_at"])
 
-    # Preserve a useful demo immediately after upgrade. The bootstrap user is
-    # the pilot default; Admin can change each product assignment in the UI.
-    op.execute(
-        sa.text(
-            "UPDATE products SET primary_reviewer_id = "
-            "(SELECT id FROM users WHERE email = 'reviewer@litmon.local' LIMIT 1) "
-            "WHERE primary_reviewer_id IS NULL"
-        )
-    )
-    op.execute(
-        sa.text(
-            "UPDATE articles SET assignee_id = "
-            "(SELECT primary_reviewer_id FROM products WHERE products.id = articles.product_id) "
-            "WHERE assignee_id IS NULL AND status NOT IN "
-            "('AUTO_CLEAR', 'DISPOSITION_NOT_CASE', 'DISPOSITION_VALID_ICSR')"
-        )
-    )
+    _backfill()
 
 
 def downgrade() -> None:

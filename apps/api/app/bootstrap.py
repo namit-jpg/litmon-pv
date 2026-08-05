@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from sqlalchemy import select
 
-from app.core.database import Base, SessionLocal, engine
+from app.core.database import SessionLocal, engine
+from app.core.migrate import run_migrations
 from app.core.security import hash_password
 from app.models import Product, SearchString, User
 from app.models.entities import Role
@@ -12,7 +13,10 @@ from app.services.audit import log_event
 
 
 def bootstrap() -> None:
-    Base.metadata.create_all(bind=engine)
+    # Go through Alembic rather than create_all: create_all adds missing
+    # tables but never adds columns to existing ones, which is what left
+    # pilot databases half-upgraded and silently broken.
+    run_migrations(engine)
     db = SessionLocal()
     try:
         users = [

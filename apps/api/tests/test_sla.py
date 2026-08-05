@@ -1,6 +1,11 @@
 from datetime import datetime, timedelta, timezone
 
-from app.services.sla import list_overdue_articles
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
+import app.models  # noqa: F401
+from app.core.database import Base
 from app.models.entities import (
     Article,
     ArticleStatus,
@@ -9,19 +14,24 @@ from app.models.entities import (
     ScreeningResult,
     TriageAssignment,
 )
-from app.core.database import Base, SessionLocal, engine
-import app.models  # noqa: F401
+from app.services.sla import list_overdue_articles
+
+
+def session():
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    return sessionmaker(bind=engine)()
 
 
 def test_list_overdue():
-    import uuid
-
-    Base.metadata.create_all(bind=engine)
-    db = SessionLocal()
+    db = session()
     try:
-        suffix = uuid.uuid4().hex[:8]
         p = Product(
-            name=f"SLA Test Product {suffix}",
+            name="SLA Test Product",
             brands=[],
             synonyms=["X"],
             is_active=True,
@@ -30,7 +40,7 @@ def test_list_overdue():
         db.flush()
         a = Article(
             product_id=p.id,
-            pmid=f"sla{suffix}",
+            pmid="sla-overdue-1",
             title="Overdue test",
             status=ArticleStatus.ROUTED,
         )
@@ -68,6 +78,6 @@ def test_list_overdue():
         db.add(t)
         db.commit()
         items = list_overdue_articles(db)
-        assert any(i["pmid"] == f"sla{suffix}" for i in items)
+        assert any(i["pmid"] == "sla-overdue-1" for i in items)
     finally:
         db.close()
