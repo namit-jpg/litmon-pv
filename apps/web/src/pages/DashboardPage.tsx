@@ -1,9 +1,16 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, DashboardSummary } from "../api";
+import { useAuth } from "../auth";
+import DashboardCharts from "../components/DashboardCharts";
 
 export default function DashboardPage() {
-  const [mineOnly, setMineOnly] = useState(true);
+  const { user } = useAuth();
+  // Reviewers carry a personal queue, so "My dashboard" is the useful default.
+  // Admins and PV leads do not, and would otherwise land on an empty view.
+  const carriesOwnQueue =
+    user?.role === "reviewer" || user?.role === "senior_reviewer";
+  const [mineOnly, setMineOnly] = useState(carriesOwnQueue);
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [error, setError] = useState("");
 
@@ -65,6 +72,7 @@ export default function DashboardPage() {
               </Link>
             ))}
           </div>
+          <DashboardCharts summary={summary} />
           <section className="card">
             <h2>Results by product</h2>
             {summary.by_product.length === 0 ? (

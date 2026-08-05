@@ -5,8 +5,8 @@ import { useAuth } from "../auth";
 export default function LoginPage() {
   const { login, token } = useAuth();
   const nav = useNavigate();
-  const [email, setEmail] = useState("reviewer@litmon.local");
-  const [password, setPassword] = useState("reviewer123");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -35,23 +35,27 @@ export default function LoginPage() {
         </p>
         <label>
           Email
-          <input value={email} onChange={(e) => setEmail(e.target.value)} />
+          <input
+            type="email"
+            value={email}
+            autoComplete="username"
+            placeholder="you@example.com"
+            onChange={(e) => setEmail(e.target.value)}
+          />
         </label>
         <label>
           Password
           <input
             type="password"
             value={password}
+            autoComplete="current-password"
             onChange={(e) => setPassword(e.target.value)}
           />
         </label>
         {error && <div className="error">{error}</div>}
-        <button className="btn primary" disabled={busy}>
+        <button className="btn primary" disabled={busy || !email || !password}>
           {busy ? "Signing in…" : "Sign in"}
         </button>
-        <p className="hint">
-          Demo: reviewer@litmon.local / reviewer123
-        </p>
       </form>
     </div>
   );

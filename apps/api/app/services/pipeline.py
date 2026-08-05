@@ -33,6 +33,12 @@ def product_name_list(product: Product) -> list[str]:
     names = [product.name]
     if product.inn:
         names.append(product.inn)
+    # Tagged Active Pharmaceutical Ingredients widen the match set — a
+    # combination product is recognised by any of its substances.
+    for ingredient in product.active_ingredients or []:
+        names.append(ingredient.name)
+        if ingredient.inn:
+            names.append(ingredient.inn)
     names.extend(product.brands or [])
     names.extend(product.synonyms or [])
     # de-dupe preserve order
@@ -484,90 +490,3 @@ def recall_article_to_review(
     db.commit()
     db.refresh(article)
     return article
-
-
-async def seed_demo_articles_async(db: Session, product: Product) -> list[Article]:
-    # Keep the demo records product-aware so the walkthrough works for any of
-    # the four seeded products instead of showing the retired DrugX placeholder.
-    drug = product.inn or product.name
-    brand = (product.brands or [drug])[0]
-    samples: list[dict[str, Any]] = [
-        {
-            "pmid": "90000001",
-            "title": f"Fatal hepatotoxicity associated with {brand} in a 67-year-old woman: a case report",
-            "abstract": (
-                "We report a 67-year-old woman who developed acute liver failure and death "
-                f"after exposure to {drug} for hypertension. Authors describe the adverse reaction "
-                "and hospital course. This case suggests a possible drug-induced liver injury."
-            ),
-            "journal": "Demo Journal of Drug Safety",
-        },
-        {
-            "pmid": "90000002",
-            "title": f"Efficacy of {brand} in phase III hypertension trial",
-            "abstract": (
-                f"A randomized controlled trial of {drug} versus placebo demonstrated significant "
-                "blood pressure reduction. Safety was similar between arms with mild headache only. "
-                f"No serious adverse events related to {drug} were observed."
-            ),
-            "journal": "Demo Cardiology",
-        },
-        {
-            "pmid": "90000003",
-            "title": f"Pregnancy outcome after first-trimester {brand} exposure: case series",
-            "abstract": (
-                f"We describe three pregnant patients exposed to {drug} during the first trimester. "
-                "One neonate had congenital anomaly. Reporter is the treating obstetrician."
-            ),
-            "journal": "Demo Reproductive Toxicology",
-        },
-        {
-            "pmid": "90000004",
-            "title": "Molecular mechanisms of calcium channel signaling in vascular smooth muscle",
-            "abstract": (
-                "This review discusses ion channel biophysics and preclinical models. "
-                "No clinical adverse event data are presented."
-            ),
-            "journal": "Demo Physiology",
-        },
-        {
-            "pmid": "90000005",
-            "title": f"Anaphylaxis in a child following {brand} administration",
-            "abstract": (
-                f"A 9-year-old boy developed anaphylaxis minutes after {drug} infusion. "
-                "The pediatric team reports successful treatment with epinephrine."
-            ),
-            "journal": "Demo Pediatrics",
-        },
-    ]
-    created: list[Article] = []
-    names = product_name_list(product)
-    for s in samples:
-        existing = db.scalars(
-            select(Article).where(
-                Article.product_id == product.id,
-                Article.pmid == s["pmid"],
-            )
-        ).first()
-        if existing:
-            created.append(existing)
-            continue
-        art = Article(
-            product_id=product.id,
-            pmid=s["pmid"],
-            title=s["title"],
-            abstract=s["abstract"],
-            journal=s["journal"],
-            authors=["Demo Author"],
-            pub_date=date.today() - timedelta(days=3),
-            mesh_terms=["Drug-Related Side Effects and Adverse Reactions"],
-            publication_types=["Case Reports"],
-            pubmed_url=f"https://pubmed.ncbi.nlm.nih.gov/{s['pmid']}/",
-            status=ArticleStatus.INGESTED,
-        )
-        db.add(art)
-        db.flush()
-        await score_and_route_article(db, art, product, names)
-        created.append(art)
-    db.commit()
-    return created

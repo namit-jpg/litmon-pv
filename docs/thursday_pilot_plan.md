@@ -60,7 +60,9 @@ real monitoring use.
 - Formal GxP validation.
 - Full multi-tenant architecture.
 - Cross-article statistical signal analytics.
-- A full detection-report or CDSCO XML redesign.
+- A full detection-report redesign.
+- MedDRA and WHO-DD coding, and E2B(R3) HL7 v3 output. The CDSCO export is
+  E2B(R2)-shaped pilot output and is not a validated regulatory submission.
 
 ## Day 1: functional vertical slice
 

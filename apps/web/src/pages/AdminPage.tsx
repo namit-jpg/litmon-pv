@@ -8,28 +8,6 @@ const DATE_PRESETS = [
   { label: "30 days", days: 30 },
 ] as const;
 
-const REAL_QUERY_EXAMPLES = [
-  {
-    label: "Ibuprofen safety (good for live test)",
-    query:
-      '(ibuprofen OR "advil") AND (adverse OR "case report" OR toxicity OR safety OR "side effect")',
-  },
-  {
-    label: "Metformin case reports",
-    query:
-      '(metformin) AND ("case report" OR adverse OR lactic OR toxicity) AND humans[MeSH Terms]',
-  },
-  {
-    label: "Amoxicillin allergy",
-    query:
-      '(amoxicillin OR Amoxil) AND (allergy OR anaphylaxis OR adverse OR "case report")',
-  },
-  {
-    label: "Atorvastatin muscle injury",
-    query:
-      '(atorvastatin OR Lipitor) AND (myopathy OR rhabdomyolysis OR adverse OR "case report")',
-  },
-] as const;
 
 export default function AdminPage() {
   const [products, setProducts] = useState<Product[]>([]);
@@ -48,18 +26,14 @@ export default function AdminPage() {
   const [evalResult, setEvalResult] = useState<EvalResult | null>(null);
   const [thresholds, setThresholds] = useState<ThresholdsConfig | null>(null);
   const [pmids, setPmids] = useState("");
-  const [csvText, setCsvText] = useState(
-    "pmid,title,abstract,journal\n90000010,Ibuprofen rash case report,We report a patient with rash after ibuprofen.,Demo Journal\n"
-  );
+  const [csvText, setCsvText] = useState("pmid,title,abstract,journal\n");
   const [msg, setMsg] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [searchDays, setSearchDays] = useState(30);
   const [maxFetch, setMaxFetch] = useState(20);
   const [selectedStringId, setSelectedStringId] = useState<number | "">("");
-  const [queryDraft, setQueryDraft] = useState<string>(
-    REAL_QUERY_EXAMPLES[0].query
-  );
+  const [queryDraft, setQueryDraft] = useState<string>("");
   const [searchProductId, setSearchProductId] = useState<number | "">("");
   const [queryNotes, setQueryNotes] = useState("Live pilot search string");
 
@@ -79,9 +53,7 @@ export default function AdminPage() {
       setExports(ex);
       setThresholds(th);
       setUsers(u);
-      // Prefer the first seeded pilot product for a predictable walkthrough.
-      const preferred =
-        p.find((x) => x.name === "Ibuprofen") || p[0] || p[p.length - 1];
+      const preferred = p[0];
       if (searchProductId === "" && preferred) {
         setSearchProductId(preferred.id);
       }
@@ -110,8 +82,7 @@ export default function AdminPage() {
   const productId =
     typeof searchProductId === "number"
       ? searchProductId
-      : products.find((x) => x.name === "Ibuprofen")?.id ||
-        products[products.length - 1]?.id;
+      : products[0]?.id;
   const activeStringId =
     typeof selectedStringId === "number"
       ? selectedStringId
@@ -205,18 +176,6 @@ export default function AdminPage() {
         <h2>Pipeline actions</h2>
         <div className="row-actions wrap">
           <button
-            className="btn primary"
-            disabled={busy}
-            onClick={() =>
-              wrap(async () => {
-                const res = await api.seedDemo();
-                setMsg(`Seeded ${res.seeded} demo articles (offline).`);
-              })
-            }
-          >
-            Seed demo articles
-          </button>
-          <button
             className="btn"
             disabled={busy}
             onClick={() =>
@@ -229,6 +188,21 @@ export default function AdminPage() {
             }
           >
             Export ICSRs
+          </button>
+          <button
+            className="btn"
+            disabled={busy}
+            onClick={() =>
+              wrap(async () => {
+                const exp = await api.exportCdscoXml();
+                setExports(await api.exports());
+                setMsg(
+                  `CDSCO E2B(R2) XML export #${exp.id}: ${exp.record_count} safety report(s) — pilot output, not a validated submission`
+                );
+              })
+            }
+          >
+            Export CDSCO XML
           </button>
           <button
             className="btn"
@@ -265,8 +239,8 @@ export default function AdminPage() {
       <section className="card">
         <h2>PubMed search string (editable)</h2>
         <p className="muted">
-          The four pilot products and starter queries are pre-seeded. Edit a
-          query below, save a new version, then run search. Saving creates a
+          Adding a product under Product Search generates a starter query. Edit
+          it below, save a new version, then run search. Saving creates a
           versioned string (old ones stay for audit).
         </p>
         {!thresholds?.ncbi_email_configured && (
@@ -290,25 +264,6 @@ export default function AdminPage() {
               {products.map((p) => (
                 <option key={p.id} value={p.id}>
                   #{p.id} {p.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Load example
-            <select
-              defaultValue=""
-              onChange={(e) => {
-                const ex = REAL_QUERY_EXAMPLES.find(
-                  (x) => x.label === e.target.value
-                );
-                if (ex) setQueryDraft(ex.query);
-              }}
-            >
-              <option value="">— pick example —</option>
-              {REAL_QUERY_EXAMPLES.map((ex) => (
-                <option key={ex.label} value={ex.label}>
-                  {ex.label}
                 </option>
               ))}
             </select>
@@ -656,6 +611,16 @@ export default function AdminPage() {
                     >
                       CSV
                     </button>
+                    {String(ex.filename).endsWith(".xml") && (
+                      <a
+                        className="btn"
+                        href={api.downloadCdscoXmlUrl(Number(ex.id))}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        XML
+                      </a>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -674,8 +639,30 @@ export default function AdminPage() {
             <div className="product-assignment-row" key={p.id}>
               <div>
                 <strong>{p.name}</strong>
+                <div className="api-tag-row">
+                  <span className="muted">APIs:</span>
+                  {(p.active_ingredients || []).length === 0 ? (
+                    <span className="muted">none tagged</span>
+                  ) : (
+                    (p.active_ingredients || []).map((ai) => (
+                      <span
+                        className="api-tag"
+                        key={ai.id}
+                        title={
+                          `Active Pharmaceutical Ingredient` +
+                          (ai.atc_code ? ` · ATC ${ai.atc_code}` : "") +
+                          (ai.inn ? ` · INN ${ai.inn}` : "")
+                        }
+                      >
+                        {ai.name}
+                        {ai.atc_code ? (
+                          <span className="api-tag-atc">{ai.atc_code}</span>
+                        ) : null}
+                      </span>
+                    ))
+                  )}
+                </div>
                 <div className="muted">
-                  {(p.inn ? `${p.inn} · ` : "")}
                   synonyms: {(p.synonyms || []).join(", ") || "none"}
                 </div>
               </div>

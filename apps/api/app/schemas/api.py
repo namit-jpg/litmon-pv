@@ -10,6 +10,7 @@ from app.models.entities import (
     DecisionAction,
     QueueType,
     Role,
+    ScheduleFrequency,
     SearchRunStatus,
     SignalStatus,
     PresenceStatus,
@@ -39,6 +40,34 @@ class UserOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class ActiveIngredientOut(BaseModel):
+    """An Active Pharmaceutical Ingredient (API) tag."""
+
+    id: int
+    name: str
+    inn: Optional[str] = None
+    atc_code: Optional[str] = None
+    unii: Optional[str] = None
+    is_active: bool = True
+
+    model_config = {"from_attributes": True}
+
+
+class ActiveIngredientIn(BaseModel):
+    name: str
+    inn: Optional[str] = None
+    atc_code: Optional[str] = None
+    unii: Optional[str] = None
+
+
+class ActiveIngredientUpdate(BaseModel):
+    name: Optional[str] = None
+    inn: Optional[str] = None
+    atc_code: Optional[str] = None
+    unii: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
 class ProductOut(BaseModel):
     id: int
     name: str
@@ -48,8 +77,39 @@ class ProductOut(BaseModel):
     atc_code: Optional[str]
     is_active: bool
     primary_reviewer_id: Optional[int] = None
+    active_ingredients: list[ActiveIngredientOut] = []
 
     model_config = {"from_attributes": True}
+
+
+class DrugConceptOut(BaseModel):
+    """A drug from the RxNorm catalogue, offered in the product picker."""
+
+    rxcui: str
+    name: str
+    tty: str
+    kind: str
+
+
+class DrugCatalogStatus(BaseModel):
+    total: int
+    last_synced_at: Optional[datetime] = None
+
+
+class ProductCreate(BaseModel):
+    """Create a monitored product, normally from a picked RxNorm concept."""
+
+    name: str = Field(min_length=1, max_length=255)
+    inn: Optional[str] = None
+    rxcui: Optional[str] = None
+    brands: list[Any] = Field(default_factory=list)
+    synonyms: list[Any] = Field(default_factory=list)
+    atc_code: Optional[str] = None
+    primary_reviewer_id: Optional[int] = None
+    active_ingredient_ids: list[int] = Field(default_factory=list)
+    # Optional custom PubMed query. When omitted a starter query is generated
+    # from the product's names and standard safety terms.
+    query_text: Optional[str] = None
 
 
 class ProductUpdate(BaseModel):
@@ -60,6 +120,8 @@ class ProductUpdate(BaseModel):
     atc_code: Optional[str] = None
     is_active: Optional[bool] = None
     primary_reviewer_id: Optional[int] = None
+    # Replaces the product's API tag set when provided.
+    active_ingredient_ids: Optional[list[int]] = None
 
 
 class SearchStringOut(BaseModel):
@@ -79,6 +141,57 @@ class SearchStringCreate(BaseModel):
     query_text: str
     approved_by: Optional[str] = None
     notes: Optional[str] = None
+
+
+class SearchScheduleOut(BaseModel):
+    id: int
+    product_id: int
+    product_name: Optional[str] = None
+    frequency: ScheduleFrequency
+    end_date: date
+    lookback_days: int
+    max_fetch: int
+    is_active: bool
+    next_run_at: Optional[datetime] = None
+    last_run_at: Optional[datetime] = None
+    last_status: Optional[str] = None
+    last_error: Optional[str] = None
+    run_count: int = 0
+    created_by: Optional[str] = None
+
+    model_config = {"from_attributes": True}
+
+
+class SearchScheduleCreate(BaseModel):
+    """Automate a recurring search for one or more products."""
+
+    product_ids: list[int] = Field(min_length=1)
+    frequency: ScheduleFrequency
+    # Inclusive last day the series may run — automated searches are always
+    # bounded so nothing keeps hitting NCBI unattended.
+    end_date: date
+    lookback_days: Optional[int] = Field(default=None, ge=1, le=365)
+    max_fetch: int = Field(default=30, ge=1, le=200)
+    # When the first run should happen. Defaults to immediately.
+    start_at: Optional[datetime] = None
+
+
+class SearchScheduleUpdate(BaseModel):
+    frequency: Optional[ScheduleFrequency] = None
+    end_date: Optional[date] = None
+    lookback_days: Optional[int] = Field(default=None, ge=1, le=365)
+    max_fetch: Optional[int] = Field(default=None, ge=1, le=200)
+    is_active: Optional[bool] = None
+
+
+class RunSearchNowIn(BaseModel):
+    """Run a manual search across several products at once."""
+
+    product_ids: list[int] = Field(min_length=1)
+    date_from: Optional[date] = None
+    date_to: Optional[date] = None
+    days: Optional[int] = Field(default=None, ge=1, le=365)
+    max_fetch: int = Field(default=30, ge=1, le=200)
 
 
 class SearchRunOut(BaseModel):
@@ -172,6 +285,8 @@ class ArticleListItem(BaseModel):
     pub_date: Optional[date]
     status: ArticleStatus
     product_id: int
+    product_name: Optional[str] = None
+    active_ingredients: list[ActiveIngredientOut] = []
     composite: Optional[float] = None
     queue: Optional[QueueType] = None
     sla_due_at: Optional[datetime] = None
@@ -197,6 +312,8 @@ class ArticleDetail(BaseModel):
     pubmed_url: Optional[str]
     status: ArticleStatus
     product_id: int
+    product_name: Optional[str] = None
+    active_ingredients: list[ActiveIngredientOut] = []
     assignee_id: Optional[int]
     signal_status: SignalStatus = SignalStatus.NOT_ASSESSED
     latest_screening: Optional[ScreeningOut] = None

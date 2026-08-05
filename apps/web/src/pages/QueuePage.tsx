@@ -214,7 +214,7 @@ export default function QueuePage() {
         <div className="empty">
           <p>No articles in this queue.</p>
           <p className="muted">
-            Use Admin → Seed demo articles or Run PubMed search to populate.
+            Use Product Search to run a PubMed search and populate the queue.
           </p>
         </div>
       ) : (
@@ -226,6 +226,7 @@ export default function QueuePage() {
               <th>Score</th>
               <th>PMID</th>
               <th>Title</th>
+              <th>Product / APIs</th>
               <th>Assignee</th>
               <th>Flags</th>
               <th>Signal</th>
@@ -258,6 +259,22 @@ export default function QueuePage() {
                 <td>{a.pmid}</td>
                 <td>
                   <Link to={`/articles/${a.id}`}>{a.title}</Link>
+                </td>
+                <td>
+                  <div className="muted" style={{ marginBottom: "0.15rem" }}>
+                    {a.product_name || "—"}
+                  </div>
+                  {a.active_ingredients.length === 0 ? (
+                    <span className="muted">no APIs tagged</span>
+                  ) : (
+                    <div className="api-tag-row api-tag-row-compact">
+                      {a.active_ingredients.map((ai) => (
+                        <span className="api-tag" key={ai.id}>
+                          {ai.name}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </td>
                 <td>
                   {a.assignee_name ? (

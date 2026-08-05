@@ -62,6 +62,67 @@ export type Presence = {
   available_capacity: number;
 };
 
+/** A drug from the NLM RxNorm catalogue, offered in the product picker. */
+export type DrugConcept = {
+  rxcui: string;
+  name: string;
+  /** RxNorm term type: IN ingredient, MIN combination, BN brand. */
+  tty: string;
+  /** Human-readable form of `tty`. */
+  kind: string;
+};
+
+export type DrugCatalogStatus = {
+  total: number;
+  last_synced_at?: string | null;
+};
+
+export type ScheduleFrequency = "daily" | "weekly" | "monthly";
+
+export type SearchSchedule = {
+  id: number;
+  product_id: number;
+  product_name?: string | null;
+  frequency: ScheduleFrequency;
+  end_date: string;
+  lookback_days: number;
+  max_fetch: number;
+  is_active: boolean;
+  next_run_at?: string | null;
+  last_run_at?: string | null;
+  last_status?: string | null;
+  last_error?: string | null;
+  run_count: number;
+  created_by?: string | null;
+};
+
+export type RunNowResult = {
+  requested: number;
+  succeeded: number;
+  failed: number;
+  new_articles: number;
+  results: {
+    product_id: number;
+    product_name?: string;
+    status: string;
+    search_run_id?: number;
+    hit_count?: number;
+    new_articles?: number;
+    rehits?: number;
+    error?: string;
+  }[];
+};
+
+/** An Active Pharmaceutical Ingredient (API) tag. */
+export type ActiveIngredient = {
+  id: number;
+  name: string;
+  inn?: string | null;
+  atc_code?: string | null;
+  unii?: string | null;
+  is_active: boolean;
+};
+
 export type Product = {
   id: number;
   name: string;
@@ -70,6 +131,7 @@ export type Product = {
   synonyms: string[];
   is_active: boolean;
   primary_reviewer_id?: number | null;
+  active_ingredients: ActiveIngredient[];
 };
 
 export type AlertItem = {
@@ -97,6 +159,9 @@ export type DashboardSummary = {
   overdue: number;
   unread_alerts: number;
   by_product: { product_id: number; product_name: string; count: number }[];
+  by_queue: { queue: string; count: number }[];
+  score_buckets: { band: string; count: number }[];
+  intake_trend: { date: string; count: number }[];
 };
 
 export type QueueStats = {
@@ -119,6 +184,8 @@ export type ArticleListItem = {
   pub_date?: string;
   status: string;
   product_id: number;
+  product_name?: string;
+  active_ingredients: ActiveIngredient[];
   composite?: number;
   queue?: string;
   sla_due_at?: string;
@@ -142,6 +209,8 @@ export type ArticleDetail = {
   pubmed_url?: string;
   status: string;
   product_id: number;
+  product_name?: string;
+  active_ingredients: ActiveIngredient[];
   assignee_id?: number;
   signal_status: string;
   latest_screening?: {
@@ -361,8 +430,6 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ max_fetch }),
     }),
-  seedDemo: () =>
-    request<{ seeded: number }>("/api/demo/seed-articles", { method: "POST" }),
   importPmids: (product_id: number, pmids_text: string) =>
     request("/api/imports/pmids", {
       method: "POST",
@@ -377,8 +444,92 @@ export const api = {
         fetch_missing_from_pubmed: fetch_missing,
       }),
     }),
+  // ── Drug catalogue (NLM RxNorm mirror) ──
+  searchDrugs: (q: string, limit?: number) =>
+    request<DrugConcept[]>(
+      `/api/drugs/search${qs({ q, limit: limit ? String(limit) : undefined })}`
+    ),
+  drugCatalogStatus: () =>
+    request<DrugCatalogStatus>("/api/drugs/status"),
+  syncDrugCatalog: () =>
+    request<DrugCatalogStatus>("/api/drugs/sync", { method: "POST" }),
+
+  // ── Products ──
+  createProduct: (body: {
+    name: string;
+    inn?: string;
+    rxcui?: string;
+    brands?: string[];
+    synonyms?: string[];
+    query_text?: string;
+  }) =>
+    request<Product>("/api/products", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  deactivateProduct: (id: number) =>
+    request<Product>(`/api/products/${id}`, { method: "DELETE" }),
+
+  // ── Manual and scheduled search ──
+  runSearchNow: (body: {
+    product_ids: number[];
+    date_from?: string;
+    date_to?: string;
+    days?: number;
+    max_fetch?: number;
+  }) =>
+    request<RunNowResult>("/api/search-runs/run-now", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  searchSchedules: () =>
+    request<SearchSchedule[]>("/api/search-schedules"),
+  createSchedules: (body: {
+    product_ids: number[];
+    frequency: ScheduleFrequency;
+    end_date: string;
+    lookback_days?: number;
+    max_fetch?: number;
+  }) =>
+    request<SearchSchedule[]>("/api/search-schedules", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  updateSchedule: (id: number, body: Record<string, unknown>) =>
+    request<SearchSchedule>(`/api/search-schedules/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  deleteSchedule: (id: number) =>
+    request<SearchSchedule>(`/api/search-schedules/${id}`, { method: "DELETE" }),
+  runDueSchedules: () =>
+    request<{ fired: number; results: Record<string, unknown>[] }>(
+      "/api/search-schedules/run-due",
+      { method: "POST" }
+    ),
+
   exportIcsr: () =>
     request<Record<string, unknown>>("/api/exports/icsr", { method: "POST" }),
+  /** CDSCO / NCC-PvPI E2B(R2) ichicsr XML export. */
+  exportCdscoXml: () =>
+    request<Record<string, unknown>>("/api/exports/cdsco-xml", { method: "POST" }),
+  downloadCdscoXmlUrl: (id: number) => `${API_BASE}/api/exports/${id}/xml`,
+  activeIngredients: () =>
+    request<ActiveIngredient[]>("/api/active-ingredients"),
+  createActiveIngredient: (body: {
+    name: string;
+    inn?: string;
+    atc_code?: string;
+  }) =>
+    request<ActiveIngredient>("/api/active-ingredients", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  setProductIngredients: (product_id: number, active_ingredient_ids: number[]) =>
+    request<Product>(`/api/products/${product_id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ active_ingredient_ids }),
+    }),
   exportParallel: (product_id?: number) =>
     request<Record<string, unknown>>(
       `/api/exports/parallel-run${product_id ? `?product_id=${product_id}` : ""}`,

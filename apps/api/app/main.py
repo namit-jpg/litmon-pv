@@ -14,6 +14,8 @@ from app.core.logging_config import RequestLoggingMiddleware, setup_logging
 from app.core.metrics import metrics
 from app.core.migrate import run_migrations
 from app.services.jobs import requeue_pending, start_worker
+from app.services.schedules import start_runner as start_schedule_runner
+from app.services.schedules import stop_runner as stop_schedule_runner
 from app.services.sla import sla_summary
 
 settings = get_settings()
@@ -44,8 +46,10 @@ async def lifespan(app: FastAPI):
     logger.info("Schema ready via %s", mode)
     await start_worker()
     n = await requeue_pending()
+    start_schedule_runner()
     logger.info("LitMon-PV API started (requeued_jobs=%s)", n)
     yield
+    await stop_schedule_runner()
     logger.info("LitMon-PV API shutting down")
 
 

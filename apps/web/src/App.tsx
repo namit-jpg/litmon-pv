@@ -11,7 +11,15 @@ import AuditPage from "./pages/AuditPage";
 import OpsPage from "./pages/OpsPage";
 import SearchRunPage from "./pages/SearchRunPage";
 import DashboardPage from "./pages/DashboardPage";
+import ProductSearchPage from "./pages/ProductSearchPage";
 import AlertsBar from "./components/AlertsBar";
+
+/** Operations surfaces. Reviewers work the queue; they do not run the system. */
+const OPS_ROLES = ["pv_lead", "admin"];
+
+function canSeeOps(role?: string): boolean {
+  return OPS_ROLES.includes(role || "");
+}
 
 function PresenceControl() {
   const [presence, setPresence] = useState<Presence | null>(null);
@@ -66,10 +74,15 @@ function Shell({ children }: { children: React.ReactNode }) {
         <nav>
           <Link to="/dashboard">Dashboard</Link>
           <Link to="/?tab=all">My Work</Link>
+          <Link to="/product-search">Product Search</Link>
           <Link to="/archive">Archive</Link>
-          <Link to="/ops">Ops</Link>
-          <Link to="/audit">Audit</Link>
-          <Link to="/admin">Admin</Link>
+          {canSeeOps(user?.role) && (
+            <>
+              <Link to="/ops">Ops</Link>
+              <Link to="/audit">Audit</Link>
+              <Link to="/admin">Admin</Link>
+            </>
+          )}
         </nav>
         <AlertsBar />
         <PresenceControl />
@@ -96,6 +109,15 @@ function Shell({ children }: { children: React.ReactNode }) {
 function Private({ children }: { children: React.ReactNode }) {
   const { token } = useAuth();
   if (!token) return <Navigate to="/login" replace />;
+  return <Shell>{children}</Shell>;
+}
+
+/** Ops-only route. Hiding the nav link is not a guard — a reviewer can still
+ *  type the URL — so the route itself redirects. The API enforces this too. */
+function OpsOnly({ children }: { children: React.ReactNode }) {
+  const { token, user } = useAuth();
+  if (!token) return <Navigate to="/login" replace />;
+  if (!canSeeOps(user?.role)) return <Navigate to="/dashboard" replace />;
   return <Shell>{children}</Shell>;
 }
 
@@ -136,27 +158,35 @@ export default function App() {
         }
       />
       <Route
-        path="/audit"
+        path="/product-search"
         element={
           <Private>
-            <AuditPage />
+            <ProductSearchPage />
           </Private>
+        }
+      />
+      <Route
+        path="/audit"
+        element={
+          <OpsOnly>
+            <AuditPage />
+          </OpsOnly>
         }
       />
       <Route
         path="/ops"
         element={
-          <Private>
+          <OpsOnly>
             <OpsPage />
-          </Private>
+          </OpsOnly>
         }
       />
       <Route
         path="/admin"
         element={
-          <Private>
+          <OpsOnly>
             <AdminPage />
-          </Private>
+          </OpsOnly>
         }
       />
       <Route

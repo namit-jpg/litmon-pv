@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi.encoders import jsonable_encoder
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
@@ -15,6 +16,7 @@ from app.core.metrics import metrics
 from app.core.rate_limit import login_limiter
 from app.core.security import create_access_token, verify_password
 from app.models import (
+    ActiveIngredient,
     Alert,
     Article,
     AuditEvent,
@@ -22,7 +24,9 @@ from app.models import (
     Job,
     Product,
     ReviewDecision,
+    ScreeningResult,
     SearchRun,
+    SearchSchedule,
     SearchString,
     TriageAssignment,
     User,
@@ -34,15 +38,22 @@ from app.models.entities import (
     Role,
     SignalStatus,
     PresenceStatus,
+    product_active_ingredients,
 )
 from app.schemas.api import (
+    ActiveIngredientIn,
+    ActiveIngredientOut,
+    ActiveIngredientUpdate,
     ArticleDetail,
     ArticleListItem,
     AlertOut,
     AuditOut,
     ExportOut,
+    DrugCatalogStatus,
+    DrugConceptOut,
     ImportCsvIn,
     ImportPmidsIn,
+    ProductCreate,
     ProductOut,
     ProductUpdate,
     QueueStats,
@@ -51,9 +62,13 @@ from app.schemas.api import (
     ReviewIn,
     ReviewOut,
     RunSearchIn,
+    RunSearchNowIn,
     SearchRunArticleItem,
     SearchRunDetail,
     SearchRunOut,
+    SearchScheduleCreate,
+    SearchScheduleOut,
+    SearchScheduleUpdate,
     SearchStringCreate,
     SearchStringOut,
     ThresholdsOut,
@@ -62,9 +77,25 @@ from app.schemas.api import (
 )
 from app.services.audit import log_event
 from app.services.alerts import create_alert, mark_alert_read
+from app.services.drug_catalog import (
+    catalog_size,
+    last_synced_at,
+    search_drugs,
+    sync_catalog,
+)
+from app.services.rxnorm import RxNormError
+from app.services.schedules import (
+    active_search_string,
+    default_lookback_days,
+    run_due_schedules,
+)
 from app.services.omnichannel import active_work_count, route_article
 from app.services.evaluation import evaluate_gold_set
-from app.services.export_service import create_icsr_export, create_parallel_run_export
+from app.services.export_service import (
+    create_cdsco_export,
+    create_icsr_export,
+    create_parallel_run_export,
+)
 from app.services.import_service import (
     import_csv_rows,
     import_pmids_from_pubmed,
@@ -73,11 +104,11 @@ from app.services.import_service import (
 )
 from app.services.jobs import enqueue_job
 from app.services.pipeline import (
+    product_name_list,
     recall_article_to_review,
     rescore_article,
     retry_search_run,
     run_search,
-    seed_demo_articles_async,
 )
 from app.services.pubmed.errors import PubMedError
 from app.services.sla import list_overdue_articles, sla_summary
@@ -247,16 +278,302 @@ def get_thresholds(_: User = Depends(get_current_user)) -> ThresholdsOut:
 
 @router.get("/products", response_model=list[ProductOut])
 def list_products(
+    include_inactive: bool = Query(default=False),
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ) -> list[Product]:
-    return list(
-        db.scalars(
-            select(Product)
-            .where(Product.is_active.is_(True))
-            .order_by(Product.name)
-        ).all()
+    q = select(Product)
+    if not include_inactive:
+        q = q.where(Product.is_active.is_(True))
+    return list(db.scalars(q.order_by(Product.name)).all())
+
+
+# Standard pharmacovigilance literature-monitoring terms. Paired with the
+# product's own names to form a starter PubMed query the PV lead can then edit.
+_SAFETY_TERMS = (
+    'adverse OR toxicity OR safety OR "case report" OR "adverse drug reaction" '
+    "OR interaction OR pregnancy OR overdose OR hypersensitivity"
+)
+
+
+def build_starter_query(names: list[str]) -> str:
+    """Compose a PubMed query from a product's names plus safety terms."""
+    unique: list[str] = []
+    for n in names:
+        n = (n or "").strip()
+        if n and n.lower() not in {u.lower() for u in unique}:
+            unique.append(n)
+    if not unique:
+        raise ValueError("At least one product name is required")
+    # Quote multi-word terms so PubMed treats them as phrases.
+    terms = " OR ".join(f'"{n}"' if " " in n else n for n in unique)
+    return f"({terms}) AND ({_SAFETY_TERMS})"
+
+
+@router.post("/products", response_model=ProductOut, status_code=201)
+def create_product(
+    body: ProductCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(Role.PV_LEAD, Role.ADMIN)),
+) -> Product:
+    """Create a monitored product and its first search string."""
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(400, "Product name is required")
+
+    existing = db.scalars(
+        select(Product).where(func.lower(Product.name) == name.lower())
+    ).first()
+    if existing:
+        if existing.is_active:
+            raise HTTPException(409, f"A product named '{existing.name}' already exists")
+        # Reactivate rather than create a duplicate row, so the product keeps
+        # its article history and audit trail.
+        existing.is_active = True
+        db.commit()
+        db.refresh(existing)
+        log_event(
+            db,
+            actor=user.email,
+            action="product_reactivated",
+            entity_type="product",
+            entity_id=str(existing.id),
+            payload={"name": existing.name},
+        )
+        db.commit()
+        return existing
+
+    if body.primary_reviewer_id is not None:
+        reviewer = db.get(User, body.primary_reviewer_id)
+        if not reviewer or not reviewer.is_active:
+            raise HTTPException(400, "primary_reviewer_id is not an active user")
+
+    product = Product(
+        name=name,
+        inn=(body.inn or "").strip() or None,
+        brands=[b for b in (body.brands or []) if str(b).strip()],
+        synonyms=[s for s in (body.synonyms or []) if str(s).strip()],
+        atc_code=(body.atc_code or "").strip() or None,
+        is_active=True,
+        primary_reviewer_id=body.primary_reviewer_id,
     )
+
+    if body.active_ingredient_ids:
+        tags = list(
+            db.scalars(
+                select(ActiveIngredient).where(
+                    ActiveIngredient.id.in_(body.active_ingredient_ids)
+                )
+            ).all()
+        )
+        found = {t.id for t in tags}
+        missing = [i for i in body.active_ingredient_ids if i not in found]
+        if missing:
+            raise HTTPException(400, f"Unknown active_ingredient_ids: {missing}")
+        product.active_ingredients = tags
+
+    db.add(product)
+    db.flush()
+
+    query_text = (body.query_text or "").strip()
+    if not query_text:
+        names = [product.name, product.inn or "", *product.brands, *product.synonyms]
+        query_text = build_starter_query([n for n in names if n])
+    db.add(
+        SearchString(
+            product_id=product.id,
+            version=1,
+            query_text=query_text,
+            is_active=True,
+            approved_by=user.email,
+            notes="Created with the product; review before relying on it.",
+        )
+    )
+
+    log_event(
+        db,
+        actor=user.email,
+        action="product_created",
+        entity_type="product",
+        entity_id=str(product.id),
+        payload={
+            "name": product.name,
+            "inn": product.inn,
+            "rxcui": body.rxcui,
+            "brands": product.brands,
+            "query_text": query_text,
+        },
+    )
+    db.commit()
+    db.refresh(product)
+    return product
+
+
+@router.delete("/products/{product_id}", response_model=ProductOut)
+def deactivate_product(
+    product_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(Role.PV_LEAD, Role.ADMIN)),
+) -> Product:
+    """Stop monitoring a product.
+
+    Deliberately a soft delete: articles, decisions and audit history for a
+    monitored product must survive, so the row is deactivated rather than
+    removed. Any recurring schedules are stopped at the same time.
+    """
+    product = db.get(Product, product_id)
+    if not product:
+        raise HTTPException(404, "Product not found")
+
+    product.is_active = False
+    stopped = 0
+    for schedule in db.scalars(
+        select(SearchSchedule).where(
+            SearchSchedule.product_id == product_id,
+            SearchSchedule.is_active.is_(True),
+        )
+    ).all():
+        schedule.is_active = False
+        stopped += 1
+
+    log_event(
+        db,
+        actor=user.email,
+        action="product_deactivated",
+        entity_type="product",
+        entity_id=str(product_id),
+        payload={"name": product.name, "schedules_stopped": stopped},
+    )
+    db.commit()
+    db.refresh(product)
+    return product
+
+
+# ── Drug catalogue (NLM RxNorm mirror) ────────────────────────────────
+
+
+@router.get("/drugs/search", response_model=list[DrugConceptOut])
+def search_drug_catalog(
+    q: str = Query(min_length=2, description="Drug name fragment"),
+    limit: Optional[int] = Query(default=None, ge=1, le=500),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> list[dict]:
+    return search_drugs(db, q, limit)
+
+
+@router.get("/drugs/status", response_model=DrugCatalogStatus)
+def drug_catalog_status(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> DrugCatalogStatus:
+    return DrugCatalogStatus(
+        total=catalog_size(db), last_synced_at=last_synced_at(db)
+    )
+
+
+@router.post("/drugs/sync", response_model=DrugCatalogStatus)
+async def sync_drug_catalog(
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(Role.PV_LEAD, Role.ADMIN)),
+) -> DrugCatalogStatus:
+    """Refresh the local drug catalogue from NLM RxNorm."""
+    try:
+        await sync_catalog(db, actor=user.email)
+    except RxNormError as exc:
+        raise HTTPException(
+            502,
+            detail={
+                "message": exc.user_message,
+                "retryable": exc.retryable,
+                "error_type": "rxnorm",
+            },
+        )
+    return DrugCatalogStatus(
+        total=catalog_size(db), last_synced_at=last_synced_at(db)
+    )
+
+
+# ── Active Pharmaceutical Ingredients (API tags) ──────────────────────
+
+
+@router.get("/active-ingredients", response_model=list[ActiveIngredientOut])
+def list_active_ingredients(
+    include_inactive: bool = Query(default=False),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> list[ActiveIngredient]:
+    q = select(ActiveIngredient)
+    if not include_inactive:
+        q = q.where(ActiveIngredient.is_active.is_(True))
+    return list(db.scalars(q.order_by(ActiveIngredient.name)).all())
+
+
+@router.post("/active-ingredients", response_model=ActiveIngredientOut)
+def create_active_ingredient(
+    body: ActiveIngredientIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(Role.PV_LEAD, Role.ADMIN)),
+) -> ActiveIngredient:
+    # Substance names are matched case-insensitively; store them normalised so
+    # "Metformin" and "metformin" cannot become two different APIs.
+    name = (body.name or "").strip().lower()
+    if not name:
+        raise HTTPException(400, "Active ingredient name is required")
+    existing = db.scalars(
+        select(ActiveIngredient).where(func.lower(ActiveIngredient.name) == name)
+    ).first()
+    if existing:
+        raise HTTPException(409, f"Active ingredient '{name}' already exists")
+    ingredient = ActiveIngredient(
+        name=name,
+        inn=(body.inn or "").strip().lower() or None,
+        atc_code=(body.atc_code or "").strip() or None,
+        unii=(body.unii or "").strip() or None,
+    )
+    db.add(ingredient)
+    db.flush()
+    log_event(
+        db,
+        actor=user.email,
+        action="active_ingredient_created",
+        entity_type="active_ingredient",
+        entity_id=ingredient.id,
+        payload={"name": ingredient.name},
+    )
+    db.commit()
+    db.refresh(ingredient)
+    return ingredient
+
+
+@router.patch("/active-ingredients/{ingredient_id}", response_model=ActiveIngredientOut)
+def update_active_ingredient(
+    ingredient_id: int,
+    body: ActiveIngredientUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(Role.PV_LEAD, Role.ADMIN)),
+) -> ActiveIngredient:
+    ingredient = db.get(ActiveIngredient, ingredient_id)
+    if not ingredient:
+        raise HTTPException(404, "Active ingredient not found")
+    data = body.model_dump(exclude_unset=True)
+    if "name" in data and data["name"]:
+        data["name"] = data["name"].strip().lower()
+    if "inn" in data and data["inn"]:
+        data["inn"] = data["inn"].strip().lower()
+    for k, v in data.items():
+        setattr(ingredient, k, v)
+    log_event(
+        db,
+        actor=user.email,
+        action="active_ingredient_updated",
+        entity_type="active_ingredient",
+        entity_id=ingredient.id,
+        payload=data,
+    )
+    db.commit()
+    db.refresh(ingredient)
+    return ingredient
 
 
 @router.patch("/products/{product_id}", response_model=ProductOut)
@@ -275,6 +592,20 @@ def update_product(
         reviewer = db.get(User, reviewer_id)
         if not reviewer or not reviewer.is_active:
             raise HTTPException(400, "Primary reviewer must be an active user")
+    # API tags are a relationship, not a column — resolve before the setattr loop.
+    ingredient_ids = data.pop("active_ingredient_ids", None)
+    if ingredient_ids is not None:
+        ingredients = list(
+            db.scalars(
+                select(ActiveIngredient).where(ActiveIngredient.id.in_(ingredient_ids))
+            ).all()
+        )
+        missing = set(ingredient_ids) - {i.id for i in ingredients}
+        if missing:
+            raise HTTPException(
+                400, f"Unknown active ingredient id(s): {sorted(missing)}"
+            )
+        product.active_ingredients = ingredients
     for k, v in data.items():
         setattr(product, k, v)
     reassigned = 0
@@ -492,6 +823,279 @@ async def trigger_search(
         ) from e
 
 
+@router.post("/search-runs/run-now")
+async def run_search_now(
+    body: RunSearchNowIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(
+        require_roles(Role.PV_LEAD, Role.ADMIN, Role.REVIEWER, Role.SENIOR_REVIEWER)
+    ),
+) -> dict:
+    """Run a manual search across several products at once.
+
+    Each product is searched independently and one product failing does not
+    abort the rest — the caller gets a per-product result either way.
+    """
+    date_from = body.date_from
+    date_to = body.date_to
+    if body.days is not None:
+        date_to = date.today()
+        date_from = date_to - timedelta(days=body.days)
+    if date_from and date_to and date_from > date_to:
+        raise HTTPException(400, "date_from must be on or before date_to")
+
+    results: list[dict] = []
+    for product_id in body.product_ids:
+        product = db.get(Product, product_id)
+        if not product:
+            results.append(
+                {"product_id": product_id, "status": "failed", "error": "Product not found"}
+            )
+            continue
+        search_string = active_search_string(db, product_id)
+        if not search_string:
+            results.append(
+                {
+                    "product_id": product_id,
+                    "product_name": product.name,
+                    "status": "failed",
+                    "error": "No active search string for this product",
+                }
+            )
+            continue
+        try:
+            run = await run_search(
+                db,
+                search_string.id,
+                date_from=date_from,
+                date_to=date_to,
+                triggered_by=user.email,
+                max_fetch=body.max_fetch,
+            )
+            results.append(
+                {
+                    "product_id": product_id,
+                    "product_name": product.name,
+                    "status": "completed",
+                    "search_run_id": run.id,
+                    "hit_count": run.hit_count,
+                    "new_articles": run.new_article_count,
+                    "rehits": run.rehit_count,
+                }
+            )
+        except PubMedError as e:
+            results.append(
+                {
+                    "product_id": product_id,
+                    "product_name": product.name,
+                    "status": "failed",
+                    "error": e.user_message,
+                    "retryable": e.retryable,
+                }
+            )
+        except Exception as e:  # noqa: BLE001 - one product must not sink the batch
+            results.append(
+                {
+                    "product_id": product_id,
+                    "product_name": product.name,
+                    "status": "failed",
+                    "error": str(e)[:300],
+                    "retryable": True,
+                }
+            )
+
+    ok = [r for r in results if r["status"] == "completed"]
+    return {
+        "requested": len(body.product_ids),
+        "succeeded": len(ok),
+        "failed": len(results) - len(ok),
+        "new_articles": sum(r.get("new_articles", 0) for r in ok),
+        "results": results,
+    }
+
+
+# ── Scheduled (automated) searches ────────────────────────────────────
+
+
+def _schedule_out(schedule: SearchSchedule) -> SearchScheduleOut:
+    out = SearchScheduleOut.model_validate(schedule)
+    out.product_name = schedule.product.name if schedule.product else None
+    return out
+
+
+@router.get("/search-schedules", response_model=list[SearchScheduleOut])
+def list_search_schedules(
+    include_inactive: bool = Query(default=True),
+    product_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> list[SearchScheduleOut]:
+    q = select(SearchSchedule)
+    if not include_inactive:
+        q = q.where(SearchSchedule.is_active.is_(True))
+    if product_id:
+        q = q.where(SearchSchedule.product_id == product_id)
+    rows = db.scalars(q.order_by(SearchSchedule.id.desc())).all()
+    return [_schedule_out(s) for s in rows]
+
+
+@router.post("/search-schedules", response_model=list[SearchScheduleOut], status_code=201)
+def create_search_schedules(
+    body: SearchScheduleCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(
+        require_roles(Role.PV_LEAD, Role.ADMIN, Role.REVIEWER, Role.SENIOR_REVIEWER)
+    ),
+) -> list[SearchScheduleOut]:
+    """Automate a recurring search for one or more products."""
+    today = datetime.now(timezone.utc).date()
+    if body.end_date < today:
+        raise HTTPException(400, "end_date cannot be in the past")
+
+    start_at = body.start_at or datetime.now(timezone.utc)
+    if start_at.tzinfo is None:
+        start_at = start_at.replace(tzinfo=timezone.utc)
+
+    lookback = body.lookback_days or default_lookback_days(body.frequency)
+
+    created: list[SearchSchedule] = []
+    for product_id in body.product_ids:
+        product = db.get(Product, product_id)
+        if not product or not product.is_active:
+            raise HTTPException(400, f"Product {product_id} not found or inactive")
+        if not active_search_string(db, product_id):
+            raise HTTPException(
+                400,
+                f"Product '{product.name}' has no active search string to schedule",
+            )
+        # One active schedule per product keeps the runner predictable; a new
+        # one supersedes the old rather than doubling up on NCBI calls.
+        for old in db.scalars(
+            select(SearchSchedule).where(
+                SearchSchedule.product_id == product_id,
+                SearchSchedule.is_active.is_(True),
+            )
+        ).all():
+            old.is_active = False
+
+        schedule = SearchSchedule(
+            product_id=product_id,
+            frequency=body.frequency,
+            end_date=body.end_date,
+            lookback_days=lookback,
+            max_fetch=body.max_fetch,
+            is_active=True,
+            next_run_at=start_at,
+            created_by=user.email,
+        )
+        db.add(schedule)
+        created.append(schedule)
+
+    db.flush()
+    for schedule in created:
+        log_event(
+            db,
+            actor=user.email,
+            action="search_schedule_created",
+            entity_type="search_schedule",
+            entity_id=str(schedule.id),
+            payload={
+                "product_id": schedule.product_id,
+                "frequency": schedule.frequency.value,
+                "end_date": schedule.end_date.isoformat(),
+                "next_run_at": schedule.next_run_at.isoformat(),
+            },
+        )
+    db.commit()
+    for schedule in created:
+        db.refresh(schedule)
+    return [_schedule_out(s) for s in created]
+
+
+@router.patch("/search-schedules/{schedule_id}", response_model=SearchScheduleOut)
+def update_search_schedule(
+    schedule_id: int,
+    body: SearchScheduleUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(
+        require_roles(Role.PV_LEAD, Role.ADMIN, Role.REVIEWER, Role.SENIOR_REVIEWER)
+    ),
+) -> SearchScheduleOut:
+    schedule = db.get(SearchSchedule, schedule_id)
+    if not schedule:
+        raise HTTPException(404, "Schedule not found")
+
+    data = body.model_dump(exclude_unset=True)
+    if "end_date" in data and data["end_date"] is not None:
+        if data["end_date"] < datetime.now(timezone.utc).date():
+            raise HTTPException(400, "end_date cannot be in the past")
+    for field, value in data.items():
+        setattr(schedule, field, value)
+
+    # Resuming a schedule whose next run is in the past would fire immediately;
+    # roll it forward instead.
+    if schedule.is_active:
+        now = datetime.now(timezone.utc)
+        nxt = schedule.next_run_at
+        if nxt is not None and nxt.tzinfo is None:
+            nxt = nxt.replace(tzinfo=timezone.utc)
+        if nxt is None or nxt < now:
+            schedule.next_run_at = now
+
+    log_event(
+        db,
+        actor=user.email,
+        action="search_schedule_updated",
+        entity_type="search_schedule",
+        entity_id=str(schedule_id),
+        payload=jsonable_encoder(data),
+    )
+    db.commit()
+    db.refresh(schedule)
+    return _schedule_out(schedule)
+
+
+@router.delete("/search-schedules/{schedule_id}", response_model=SearchScheduleOut)
+def delete_search_schedule(
+    schedule_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(
+        require_roles(Role.PV_LEAD, Role.ADMIN, Role.REVIEWER, Role.SENIOR_REVIEWER)
+    ),
+) -> SearchScheduleOut:
+    """Stop a recurring search (soft delete, so the audit trail survives)."""
+    schedule = db.get(SearchSchedule, schedule_id)
+    if not schedule:
+        raise HTTPException(404, "Schedule not found")
+    schedule.is_active = False
+    log_event(
+        db,
+        actor=user.email,
+        action="search_schedule_stopped",
+        entity_type="search_schedule",
+        entity_id=str(schedule_id),
+        payload={"product_id": schedule.product_id},
+    )
+    db.commit()
+    db.refresh(schedule)
+    return _schedule_out(schedule)
+
+
+@router.post("/search-schedules/run-due")
+async def trigger_due_schedules(
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(Role.PV_LEAD, Role.ADMIN)),
+) -> dict:
+    """Fire every schedule that is currently due.
+
+    The in-process runner already does this on a timer; this endpoint exists so
+    an external scheduler (cron, Windows Task Scheduler) can drive it instead,
+    and so schedules can be tested without waiting for the next tick.
+    """
+    results = await run_due_schedules(db)
+    return {"fired": len(results), "results": results}
+
+
 @router.post("/search-runs/{run_id}/retry", response_model=SearchRunOut)
 async def retry_failed_search_run(
     run_id: int,
@@ -528,27 +1132,6 @@ async def retry_failed_search_run(
                 "error_type": type(e).__name__,
             },
         ) from e
-
-
-@router.post("/demo/seed-articles")
-async def seed_demo(
-    db: Session = Depends(get_db),
-    user: User = Depends(require_roles(Role.PV_LEAD, Role.ADMIN)),
-) -> dict:
-    product = db.scalars(select(Product).where(Product.is_active.is_(True))).first()
-    if not product:
-        raise HTTPException(400, "No active product")
-    arts = await seed_demo_articles_async(db, product)
-    log_event(
-        db,
-        actor=user.email,
-        action="demo_seed",
-        entity_type="product",
-        entity_id=product.id,
-        payload={"count": len(arts)},
-    )
-    db.commit()
-    return {"seeded": len(arts), "product_id": product.id}
 
 
 # ── Import ────────────────────────────────────────────────────────────
@@ -656,6 +1239,7 @@ def list_articles(
     queue: Optional[QueueType] = None,
     status: Optional[ArticleStatus] = None,
     product_id: Optional[int] = None,
+    active_ingredient_id: Optional[int] = None,
     q: Optional[str] = None,
     open_only: bool = Query(default=True),
     include_archive: bool = Query(default=False),
@@ -669,6 +1253,17 @@ def list_articles(
     query = select(Article)
     if product_id:
         query = query.where(Article.product_id == product_id)
+    if active_ingredient_id:
+        # The point of tagging the API: one substance spans many products, so
+        # this returns every article for every product carrying that API.
+        query = query.where(
+            Article.product_id.in_(
+                select(product_active_ingredients.c.product_id).where(
+                    product_active_ingredients.c.active_ingredient_id
+                    == active_ingredient_id
+                )
+            )
+        )
     if status:
         query = query.where(Article.status == status)
         open_only = False  # explicit status wins
@@ -716,6 +1311,19 @@ def list_articles(
         if assignee_ids
         else {}
     )
+    # Batch-load products (with their API tags) once rather than per-row, so
+    # reviewers see the substance behind each product without an N+1 query.
+    product_ids = {a.product_id for a in articles}
+    products_by_id = (
+        {
+            p.id: p
+            for p in db.scalars(
+                select(Product).where(Product.id.in_(product_ids))
+            ).all()
+        }
+        if product_ids
+        else {}
+    )
     now = datetime.now(timezone.utc)
     for a in articles:
         triage = next((t for t in a.triage_assignments if t.is_active), None)
@@ -732,6 +1340,7 @@ def list_articles(
         screening = (
             max(a.screening_results, key=lambda s: s.id) if a.screening_results else None
         )
+        product = products_by_id.get(a.product_id)
         items.append(
             ArticleListItem(
                 id=a.id,
@@ -741,6 +1350,8 @@ def list_articles(
                 pub_date=a.pub_date,
                 status=a.status,
                 product_id=a.product_id,
+                product_name=product.name if product else None,
+                active_ingredients=product.active_ingredients if product else [],
                 composite=screening.composite if screening else None,
                 queue=triage.queue if triage else None,
                 sla_due_at=triage.sla_due_at if triage else None,
@@ -816,6 +1427,8 @@ def get_article(
         pubmed_url=a.pubmed_url,
         status=a.status,
         product_id=a.product_id,
+        product_name=a.product.name if a.product else None,
+        active_ingredients=a.product.active_ingredients if a.product else [],
         assignee_id=a.assignee_id,
         signal_status=a.signal_status,
         latest_screening=screening,
@@ -1004,6 +1617,9 @@ def dashboard_summary(
     by_product_q = (
         select(Product.id, Product.name, func.count(Article.id))
         .join(Article, Article.product_id == Product.id)
+        # Retired products keep their articles for audit, but they would
+        # otherwise skew the dashboard against the live monitoring set.
+        .where(Product.is_active.is_(True))
         .group_by(Product.id, Product.name)
         .order_by(Product.name)
     )
@@ -1013,6 +1629,84 @@ def dashboard_summary(
         {"product_id": pid, "product_name": name, "count": count}
         for pid, name, count in db.execute(by_product_q).all()
     ]
+    # ── Chart series ──────────────────────────────────────────────────
+    # Triage queue mix across open work.
+    by_queue_q = (
+        select(TriageAssignment.queue, func.count(TriageAssignment.id))
+        .join(Article, Article.id == TriageAssignment.article_id)
+        .where(
+            TriageAssignment.is_active.is_(True),
+            Article.status.in_(open_statuses),
+        )
+        .group_by(TriageAssignment.queue)
+    )
+    if article_filter is not None:
+        by_queue_q = by_queue_q.where(article_filter)
+    queue_counts = {q.value: c for q, c in db.execute(by_queue_q).all()}
+    by_queue = [
+        {"queue": q.value, "count": queue_counts.get(q.value, 0)}
+        for q in QueueType
+    ]
+
+    # Screening composite distribution, in the bands the triage engine uses.
+    buckets = [
+        ("0.0-0.2", 0.0, 0.2),
+        ("0.2-0.4", 0.2, 0.4),
+        ("0.4-0.6", 0.4, 0.6),
+        ("0.6-0.8", 0.6, 0.8),
+        ("0.8-1.0", 0.8, 1.01),
+    ]
+    score_buckets = []
+    for label, lo, hi in buckets:
+        q = (
+            select(func.count(ScreeningResult.id))
+            .join(Article, Article.id == ScreeningResult.article_id)
+            .where(ScreeningResult.composite >= lo, ScreeningResult.composite < hi)
+        )
+        if article_filter is not None:
+            q = q.where(article_filter)
+        score_buckets.append({"band": label, "count": db.scalar(q) or 0})
+
+    # Literature volume by publication date, bucketed into weeks.
+    #
+    # Weekly rather than daily on purpose: PubMed records frequently omit the
+    # day component, and the parser falls back to the 1st of the month, so a
+    # daily series shows large artificial spikes on the 1st. Weekly buckets
+    # smooth that artefact and match the cadence PV teams actually review on.
+    today = datetime.now(timezone.utc).date()
+    weeks = 8
+    # Anchor to the start of the current week (Monday).
+    week_start = today - timedelta(days=today.weekday())
+    since_day = week_start - timedelta(weeks=weeks - 1)
+    trend_q = (
+        select(Article.pub_date, func.count(Article.id))
+        .join(Product, Product.id == Article.product_id)
+        .where(
+            Article.pub_date.is_not(None),
+            Article.pub_date >= since_day,
+            Product.is_active.is_(True),
+        )
+        .group_by(Article.pub_date)
+    )
+    if article_filter is not None:
+        trend_q = trend_q.where(article_filter)
+
+    week_counts: dict[str, int] = {}
+    for pub_day, count in db.execute(trend_q).all():
+        if not pub_day:
+            continue
+        if isinstance(pub_day, str):
+            pub_day = datetime.strptime(pub_day, "%Y-%m-%d").date()
+        bucket = pub_day - timedelta(days=pub_day.weekday())
+        week_counts[bucket.isoformat()] = week_counts.get(bucket.isoformat(), 0) + count
+
+    intake_trend = []
+    for i in range(weeks):
+        day = since_day + timedelta(weeks=i)
+        intake_trend.append(
+            {"date": day.isoformat(), "count": week_counts.get(day.isoformat(), 0)}
+        )
+
     unread = db.scalar(
         select(func.count())
         .select_from(Alert)
@@ -1041,6 +1735,9 @@ def dashboard_summary(
         "overdue": len(overdue),
         "unread_alerts": unread,
         "by_product": by_product,
+        "by_queue": by_queue,
+        "score_buckets": score_buckets,
+        "intake_trend": intake_trend,
     }
 
 
@@ -1101,6 +1798,49 @@ def export_icsr(
     return pkg
 
 
+class CdscoExportIn(BaseModel):
+    sender_id: Optional[str] = None
+    receiver_id: Optional[str] = None
+
+
+@router.post("/exports/cdsco-xml", response_model=ExportOut)
+def export_cdsco_xml(
+    body: Optional[CdscoExportIn] = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(Role.PV_LEAD, Role.ADMIN)),
+) -> ExportPackage:
+    """Build the CDSCO / NCC-PvPI E2B(R2) XML package for confirmed ICSRs."""
+    pkg = create_cdsco_export(
+        db,
+        actor=user.email,
+        created_by=user.id,
+        sender_id=body.sender_id if body else None,
+        receiver_id=body.receiver_id if body else None,
+    )
+    metrics.exports += 1
+    return pkg
+
+
+@router.get("/exports/{export_id}/xml")
+def download_cdsco_xml(
+    export_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> Response:
+    """Serve a CDSCO export package as a downloadable XML file."""
+    pkg = db.get(ExportPackage, export_id)
+    if not pkg:
+        raise HTTPException(404, "Export not found")
+    xml_doc = (pkg.payload_json or {}).get("xml")
+    if not xml_doc:
+        raise HTTPException(400, "This export package has no XML payload")
+    return Response(
+        content=xml_doc,
+        media_type="application/xml",
+        headers={"Content-Disposition": f'attachment; filename="{pkg.filename}"'},
+    )
+
+
 @router.post("/exports/parallel-run", response_model=ExportOut)
 def export_parallel_run(
     product_id: Optional[int] = None,
@@ -1156,10 +1896,29 @@ def get_export(
 
 @router.post("/evaluation/run")
 async def run_evaluation(
+    db: Session = Depends(get_db),
     _: User = Depends(require_roles(Role.PV_LEAD, Role.ADMIN)),
 ) -> dict:
-    """Run gold-label evaluation (sensitivity primary KPI)."""
-    return await evaluate_gold_set()
+    """Run gold-label evaluation (sensitivity primary KPI).
+
+    Scores the validation set against the products actually being monitored,
+    so the KPI reflects the live configuration rather than a fixture.
+    """
+    names: list[str] = []
+    for product in db.scalars(
+        select(Product).where(Product.is_active.is_(True))
+    ).all():
+        names.extend(product_name_list(product))
+    if not names:
+        return {
+            "configured": False,
+            "message": "Add at least one monitored product before running evaluation.",
+            "total": 0,
+        }
+    try:
+        return await evaluate_gold_set(product_names=names)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
 
 
 # ── Audit ─────────────────────────────────────────────────────────────
@@ -1172,7 +1931,9 @@ def list_audit(
     action: Optional[str] = None,
     limit: int = Query(default=100, le=500),
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    # The audit trail is a controlled record covering every reviewer's actions,
+    # so it is an oversight function rather than something a reviewer browses.
+    _: User = Depends(require_roles(Role.PV_LEAD, Role.ADMIN)),
 ) -> list[AuditEvent]:
     q = select(AuditEvent).order_by(AuditEvent.id.desc()).limit(limit)
     if entity_type:
@@ -1285,7 +2046,7 @@ def list_jobs(
     status: Optional[str] = None,
     limit: int = Query(default=50, le=200),
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = Depends(require_roles(Role.PV_LEAD, Role.ADMIN)),
 ) -> list[Job]:
     q = select(Job).order_by(Job.id.desc()).limit(limit)
     if status:
@@ -1302,7 +2063,7 @@ def list_jobs(
 def get_job(
     job_id: int,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = Depends(require_roles(Role.PV_LEAD, Role.ADMIN)),
 ) -> Job:
     job = db.get(Job, job_id)
     if not job:

@@ -7,6 +7,7 @@ from typing import Any, Optional
 from sqlalchemy import (
     JSON,
     Boolean,
+    Column,
     Date,
     DateTime,
     Enum,
@@ -14,6 +15,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     String,
+    Table,
     Text,
     UniqueConstraint,
     func,
@@ -41,6 +43,12 @@ class SearchRunStatus(str, enum.Enum):
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
+
+
+class ScheduleFrequency(str, enum.Enum):
+    DAILY = "daily"
+    WEEKLY = "weekly"
+    MONTHLY = "monthly"
 
 
 class ArticleStatus(str, enum.Enum):
@@ -108,6 +116,81 @@ class User(Base):
     )
 
 
+product_active_ingredients = Table(
+    "product_active_ingredients",
+    Base.metadata,
+    Column(
+        "product_id",
+        ForeignKey("products.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column(
+        "active_ingredient_id",
+        ForeignKey("active_ingredients.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+)
+
+
+class ActiveIngredient(Base):
+    """An Active Pharmaceutical Ingredient (API).
+
+    Per ICH Q7 the API is the substance that furnishes pharmacological
+    activity, as distinct from the excipients it is formulated with. It is
+    modelled as a tag rather than a column on Product because the
+    relationship is genuinely many-to-many: a combination product carries
+    several APIs, and one API appears across many branded products.
+
+    On regulatory export this maps to E2B activesubstancename
+    (G.k.2.3.r), which is the element CDSCO/PvPI expects for the substance
+    behind a suspect medicinal product.
+    """
+
+    __tablename__ = "active_ingredients"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # Substance name as used on the label, e.g. "metformin hydrochloride"
+    name: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    # International Nonproprietary Name, e.g. "metformin"
+    inn: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    # WHO Anatomical Therapeutic Chemical code, e.g. "A10BA02"
+    atc_code: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    # FDA Unique Ingredient Identifier
+    unii: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    products: Mapped[list[Product]] = relationship(
+        secondary=product_active_ingredients, back_populates="active_ingredients"
+    )
+
+
+class DrugConcept(Base):
+    """A drug concept mirrored from NLM RxNorm.
+
+    This is the reference catalogue the "add a product" picker searches. It is
+    a local mirror rather than a live call per keystroke so the picker stays
+    instant and keeps working without a network. Nothing here is hand-written:
+    rows are synced from RxNorm and can be refreshed at any time.
+    """
+
+    __tablename__ = "drug_concepts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # RxNorm concept unique identifier.
+    rxcui: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(512), index=True)
+    # Lower-cased copy so SQLite LIKE matching is predictable across collations.
+    name_lower: Mapped[str] = mapped_column(String(512), index=True)
+    # RxNorm term type: IN = ingredient, MIN = multi-ingredient, BN = brand.
+    tty: Mapped[str] = mapped_column(String(8), index=True)
+    synced_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class Product(Base):
     __tablename__ = "products"
 
@@ -127,6 +210,11 @@ class Product(Base):
 
     search_strings: Mapped[list[SearchString]] = relationship(back_populates="product")
     articles: Mapped[list[Article]] = relationship(back_populates="product")
+    active_ingredients: Mapped[list[ActiveIngredient]] = relationship(
+        secondary=product_active_ingredients,
+        back_populates="products",
+        lazy="selectin",
+    )
 
 
 class SearchString(Base):
@@ -146,6 +234,44 @@ class SearchString(Base):
 
     product: Mapped[Product] = relationship(back_populates="search_strings")
     runs: Mapped[list[SearchRun]] = relationship(back_populates="search_string")
+
+
+class SearchSchedule(Base):
+    """A recurring PubMed search for one product.
+
+    The runner fires a schedule when ``next_run_at`` is due, then advances it by
+    the frequency. ``next_run_at`` is persisted rather than derived from a timer
+    so schedules survive a restart, and ``end_date`` bounds the whole series so
+    an automated search can never run forever unattended.
+    """
+
+    __tablename__ = "search_schedules"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)
+    frequency: Mapped[ScheduleFrequency] = mapped_column(Enum(ScheduleFrequency))
+    # Inclusive last day the series may run. Past this the schedule goes idle.
+    end_date: Mapped[date] = mapped_column(Date)
+    # How many days back each run should look. Defaults to one interval so a
+    # weekly schedule covers the week it just waited through, with no gap.
+    lookback_days: Mapped[int] = mapped_column(Integer, default=7)
+    max_fetch: Mapped[int] = mapped_column(Integer, default=30)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    next_run_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), index=True
+    )
+    last_run_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_status: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    run_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    product: Mapped[Product] = relationship()
 
 
 class SearchRun(Base):

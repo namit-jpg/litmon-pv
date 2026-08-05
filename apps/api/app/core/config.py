@@ -35,6 +35,24 @@ class Settings(BaseSettings):
     llm_model: str = "grok-2-latest"
     llm_mock: bool = True
 
+    # NLM RxNorm drug catalogue (free, no API key). Mirrored locally so the
+    # product picker stays instant and works without a network.
+    rxnorm_base_url: str = "https://rxnav.nlm.nih.gov/REST"
+    rxnorm_timeout_seconds: float = 90.0
+    # Most matches the drug picker will ever return for one query. Keeps the
+    # multi-select usable — the catalogue itself is far larger.
+    drug_search_limit: int = 100
+
+    # Interval the scheduled-search runner uses to look for due schedules.
+    schedule_tick_seconds: int = 60
+
+    # Path to a local copy of the ICH ICSR v2.1 DTD. Not shipped with this
+    # repo (ICH forbids commercial redistribution); when set, CDSCO exports
+    # are DTD-validated at generation time.
+    cdsco_dtd_path: str = ""
+    cdsco_sender_id: str = "LITMON-PV-PILOT"
+    cdsco_receiver_id: str = "NCC-PvPI-CDSCO"
+
     app_env: str = "development"
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     auto_clear_qc_sample_rate: float = 0.10

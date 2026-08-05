@@ -11,9 +11,11 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Article, ExportPackage, User
+from app.core.config import get_settings
+from app.models import Article, ExportPackage, Product, User
 from app.models.entities import ArticleStatus
 from app.services.audit import log_event
+from app.services.cdsco_xml import build_ichicsr_xml, validate_ichicsr
 
 
 def build_icsr_records(db: Session, articles: list[Article]) -> list[dict[str, Any]]:
@@ -26,8 +28,17 @@ def build_icsr_records(db: Session, articles: list[Article]) -> list[dict[str, A
             max(a.review_decisions, key=lambda d: d.id) if a.review_decisions else None
         )
         reviewer = db.get(User, last_decision.reviewer_id) if last_decision else None
+        product = db.get(Product, a.product_id)
+        # Active Pharmaceutical Ingredients tagged on the product. These become
+        # E2B activesubstancename (G.k.2.3.r) on the CDSCO export; fall back to
+        # the legacy single inn column for products not yet tagged.
+        ingredients = [ing.name for ing in (product.active_ingredients if product else [])]
+        if not ingredients and product and product.inn:
+            ingredients = [product.inn]
         records.append(
             {
+                "product": product.name if product else None,
+                "active_ingredients": ingredients,
                 "pmid": a.pmid,
                 "doi": a.doi,
                 "title": a.title,
@@ -124,6 +135,71 @@ def create_icsr_export(
         entity_type="export_package",
         entity_id=None,
         payload={"count": len(records)},
+    )
+    db.commit()
+    db.refresh(pkg)
+    return pkg
+
+
+def create_cdsco_export(
+    db: Session,
+    *,
+    actor: str,
+    created_by: int | None,
+    sender_id: str | None = None,
+    receiver_id: str | None = None,
+) -> ExportPackage:
+    """Build the CDSCO / NCC-PvPI E2B(R2) XML package for confirmed ICSRs."""
+    articles = list(
+        db.scalars(
+            select(Article).where(Article.status == ArticleStatus.DISPOSITION_VALID_ICSR)
+        ).all()
+    )
+    records = build_icsr_records(db, articles)
+    kwargs: dict[str, Any] = {}
+    if sender_id:
+        kwargs["sender_id"] = sender_id
+    if receiver_id:
+        kwargs["receiver_id"] = receiver_id
+    xml_doc = build_ichicsr_xml(records, **kwargs)
+
+    # DTD-validate at generation time when a local DTD is configured, so a
+    # structurally broken document is caught here rather than at the gateway.
+    dtd_path = (get_settings().cdsco_dtd_path or "").strip()
+    if dtd_path:
+        dtd_valid, dtd_errors = validate_ichicsr(xml_doc, dtd_path)
+    else:
+        dtd_valid, dtd_errors = None, ["CDSCO_DTD_PATH not configured"]
+
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    pkg = ExportPackage(
+        filename=f"cdsco_icsr_{ts}.xml",
+        article_ids=[a.id for a in articles],
+        record_count=len(records),
+        payload_json={
+            "generated_at": ts,
+            "format": "cdsco_e2b_r2_ichicsr",
+            "dtd": "ICH ICSR v2.1",
+            "dtd_valid": dtd_valid,
+            "dtd_errors": dtd_errors,
+            "notes": (
+                "E2B(R2) ichicsr structure for CDSCO / NCC-PvPI. Structure is "
+                "DTD-checkable, but content is not regulatory-ready: reaction "
+                "terms are not MedDRA-coded and products are not WHO-DD coded."
+            ),
+            "xml": xml_doc,
+            "records": records,
+        },
+        created_by=created_by,
+    )
+    db.add(pkg)
+    log_event(
+        db,
+        actor=actor,
+        action="export_cdsco_xml",
+        entity_type="export_package",
+        entity_id=None,
+        payload={"count": len(records), "format": "e2b_r2"},
     )
     db.commit()
     db.refresh(pkg)

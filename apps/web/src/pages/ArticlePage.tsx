@@ -94,6 +94,29 @@ export default function ArticlePage() {
               {article.pub_date ? ` · ${article.pub_date}` : ""}
             </p>
             <h1>{article.title}</h1>
+            <div className="api-tag-row">
+              <strong>{article.product_name || "—"}</strong>
+              {article.active_ingredients.length === 0 ? (
+                <span className="muted">no APIs tagged</span>
+              ) : (
+                article.active_ingredients.map((ai) => (
+                  <span
+                    className="api-tag"
+                    key={ai.id}
+                    title={
+                      `Active Pharmaceutical Ingredient` +
+                      (ai.atc_code ? ` · ATC ${ai.atc_code}` : "") +
+                      (ai.inn ? ` · INN ${ai.inn}` : "")
+                    }
+                  >
+                    {ai.name}
+                    {ai.atc_code ? (
+                      <span className="api-tag-atc">{ai.atc_code}</span>
+                    ) : null}
+                  </span>
+                ))
+              )}
+            </div>
           </div>
           <div className="row-actions wrap">
             {article.pubmed_url && (

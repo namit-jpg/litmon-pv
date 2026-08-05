@@ -21,12 +21,18 @@ _GOLD_PATHS = [
 
 
 def load_gold_set(path: Path | None = None) -> list[dict[str, Any]]:
+    """Load the validation set, or return empty if none is configured.
+
+    No gold set ships with the application. A sensitivity figure computed on
+    invented articles would be a fabricated KPI, so the evaluation reports
+    "not configured" until a real, labelled set is supplied.
+    """
     if path and path.exists():
         return json.loads(path.read_text(encoding="utf-8"))
     for p in _GOLD_PATHS:
         if p.exists():
             return json.loads(p.read_text(encoding="utf-8"))
-    raise FileNotFoundError("gold_labels.json not found under data/seed/")
+    return []
 
 
 def is_surfaced(queue: QueueType) -> bool:
@@ -38,8 +44,21 @@ async def evaluate_gold_set(
     gold: list[dict[str, Any]] | None = None,
     product_names: list[str] | None = None,
 ) -> dict[str, Any]:
-    gold = gold or load_gold_set()
-    product_names = product_names or ["DrugX", "drugxanib", "DX-101"]
+    gold = gold if gold is not None else load_gold_set()
+    if not gold:
+        return {
+            "configured": False,
+            "message": (
+                "No validation set is configured. Supply a labelled gold set at "
+                "data/seed/gold_labels.json to measure screening sensitivity."
+            ),
+            "total": 0,
+        }
+    if not product_names:
+        raise ValueError(
+            "product_names is required — evaluation must run against the "
+            "products actually being monitored."
+        )
 
     tp = fp = tn = fn = 0
     details: list[dict[str, Any]] = []
