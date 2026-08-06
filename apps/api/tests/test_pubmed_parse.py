@@ -13,9 +13,9 @@ SAMPLE = """<?xml version="1.0"?>
       <PubDate><Year>2024</Year><Month>Jun</Month><Day>15</Day></PubDate>
      </JournalIssue>
     </Journal>
-    <ArticleTitle>DrugX case report of rash</ArticleTitle>
+    <ArticleTitle>atorvastatin case report of rash</ArticleTitle>
     <Abstract>
-     <AbstractText>We report a patient with rash after DrugX.</AbstractText>
+     <AbstractText>We report a patient with rash after atorvastatin.</AbstractText>
     </Abstract>
     <AuthorList>
      <Author><LastName>Smith</LastName><ForeName>Jane</ForeName></Author>
@@ -39,7 +39,7 @@ def test_parse_efetch():
     assert len(arts) == 1
     a = arts[0]
     assert a.pmid == "12345678"
-    assert "DrugX" in a.title
+    assert "atorvastatin" in a.title
     assert a.doi == "10.1000/demo"
     assert a.authors == ["Smith Jane"]
     assert "Exanthema" in a.mesh_terms

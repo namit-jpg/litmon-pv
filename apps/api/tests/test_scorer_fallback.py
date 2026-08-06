@@ -22,9 +22,9 @@ def test_fail_open_on_timeout(monkeypatch):
     with patch("app.services.ai.scorer.httpx.AsyncClient", return_value=mock_client):
         out, model, is_mock, meta = asyncio.run(
             score_article(
-                title="DrugX case report in a patient",
-                abstract="We report rash after DrugX.",
-                product_names=["DrugX"],
+                title="atorvastatin case report in a patient",
+                abstract="We report rash after atorvastatin.",
+                product_names=["atorvastatin"],
             )
         )
 

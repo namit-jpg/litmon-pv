@@ -83,12 +83,23 @@ class ProductOut(BaseModel):
 
 
 class DrugConceptOut(BaseModel):
-    """A drug from the RxNorm catalogue, offered in the product picker."""
+    """A drug from the RxNorm catalogue, as offered in the picker."""
 
     rxcui: str
     name: str
     tty: str
     kind: str
+    is_monitored: bool = False
+    product_id: Optional[int] = None
+    article_count: int = 0
+
+
+class DrugRef(BaseModel):
+    """A drug the user picked. The backing product is created on demand."""
+
+    name: str = Field(min_length=1, max_length=255)
+    rxcui: Optional[str] = None
+    tty: Optional[str] = None
 
 
 class DrugCatalogStatus(BaseModel):
@@ -166,9 +177,11 @@ class SearchScheduleOut(BaseModel):
 
 
 class SearchScheduleCreate(BaseModel):
-    """Automate a recurring search for one or more products."""
+    """Automate a recurring search for one or more drugs."""
 
-    product_ids: list[int] = Field(min_length=1)
+    # Either pick drugs (normal path) or name existing products directly.
+    drugs: list[DrugRef] = Field(default_factory=list)
+    product_ids: list[int] = Field(default_factory=list)
     frequency: ScheduleFrequency
     # Inclusive last day the series may run — automated searches are always
     # bounded so nothing keeps hitting NCBI unattended.
@@ -188,9 +201,11 @@ class SearchScheduleUpdate(BaseModel):
 
 
 class RunSearchNowIn(BaseModel):
-    """Run a manual search across several products at once."""
+    """Run a manual search across several drugs at once."""
 
-    product_ids: list[int] = Field(min_length=1)
+    # Either pick drugs (normal path) or name existing products directly.
+    drugs: list[DrugRef] = Field(default_factory=list)
+    product_ids: list[int] = Field(default_factory=list)
     date_from: Optional[date] = None
     date_to: Optional[date] = None
     days: Optional[int] = Field(default=None, ge=1, le=365)

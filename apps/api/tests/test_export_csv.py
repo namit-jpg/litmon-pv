@@ -6,11 +6,11 @@ def test_records_to_csv():
         {
             "pmid": "1",
             "title": "A",
-            "suspect_products": ["DrugX"],
+            "suspect_products": ["atorvastatin"],
             "ai_reason_tags": [{"code": "x"}],
         }
     ]
     csv = records_to_csv(rows)
     assert "pmid" in csv
-    assert "DrugX" in csv
+    assert "atorvastatin" in csv
     assert "1" in csv

@@ -1050,6 +1050,74 @@ pre {
   color: var(--warn-ink);
 }
 
+/* Drug multi-select */
+.drug-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 0.35rem;
+  max-height: 420px;
+  overflow-y: auto;
+  margin-top: 0.5rem;
+  padding: 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+}
+.drug-option {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0.45rem 0.6rem;
+  background: var(--panel);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+.drug-option:hover {
+  border-color: var(--accent-2);
+}
+.drug-option.is-selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.drug-option input[type="checkbox"] {
+  margin: 0;
+  flex: none;
+}
+.drug-option-name {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0.6rem 0 0.2rem;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.55rem;
+  font: inherit;
+  font-size: 0.78rem;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid #bcdcc6;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.chip:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+  background: var(--danger-soft);
+}
+
 .product-select-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));

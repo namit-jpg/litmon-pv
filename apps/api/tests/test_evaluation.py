@@ -10,10 +10,10 @@ from app.services.evaluation import evaluate_gold_set, load_gold_set
 GOLD = [
     {
         "id": "t1",
-        "title": "Fatal hepatotoxicity after Testodrug in a 67-year-old: case report",
+        "title": "Fatal hepatotoxicity after warfarin in a 67-year-old: case report",
         "abstract": (
             "We report a 67-year-old woman who developed acute liver failure "
-            "and died after exposure to Testodrug. The adverse reaction and "
+            "and died after exposure to warfarin. The adverse reaction and "
             "hospital course are described."
         ),
         "is_icsr": True,
@@ -21,9 +21,9 @@ GOLD = [
     },
     {
         "id": "t2",
-        "title": "Efficacy of Testodrug in a phase III hypertension trial",
+        "title": "Efficacy of warfarin in a phase III hypertension trial",
         "abstract": (
-            "A randomized controlled trial of Testodrug versus placebo showed "
+            "A randomized controlled trial of warfarin versus placebo showed "
             "blood pressure reduction. No serious adverse events were observed."
         ),
         "is_icsr": False,
@@ -31,17 +31,17 @@ GOLD = [
     },
     {
         "id": "t3",
-        "title": "Anaphylaxis following Testodrug administration: a case report",
+        "title": "Anaphylaxis following warfarin administration: a case report",
         "abstract": (
             "A 41-year-old man developed anaphylaxis within minutes of "
-            "receiving Testodrug and required hospitalisation."
+            "receiving warfarin and required hospitalisation."
         ),
         "is_icsr": True,
         "should_surface": True,
     },
 ]
 
-NAMES = ["Testodrug"]
+NAMES = ["warfarin"]
 
 
 def test_missing_gold_set_reports_not_configured():

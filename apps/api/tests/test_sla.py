@@ -31,7 +31,7 @@ def test_list_overdue():
     db = session()
     try:
         p = Product(
-            name="SLA Test Product",
+            name="celecoxib",
             brands=[],
             synonyms=["X"],
             is_active=True,

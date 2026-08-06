@@ -51,6 +51,7 @@ from app.schemas.api import (
     ExportOut,
     DrugCatalogStatus,
     DrugConceptOut,
+    DrugRef,
     ImportCsvIn,
     ImportPmidsIn,
     ProductCreate,
@@ -82,7 +83,8 @@ from app.services.drug_catalog import (
     derive_ingredient_names,
     get_or_create_ingredients,
     last_synced_at,
-    search_drugs,
+    list_drugs,
+    resolve_drug_to_product,
     sync_catalog,
 )
 from app.services.rxnorm import RxNormError
@@ -476,6 +478,20 @@ def deactivate_product(
 # ── Drug catalogue (NLM RxNorm mirror) ────────────────────────────────
 
 
+@router.get("/drugs", response_model=list[DrugConceptOut])
+def list_drug_catalog(
+    q: str = Query(default="", description="Optional drug name filter"),
+    limit: Optional[int] = Query(default=None, ge=1, le=500),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> list[dict]:
+    """Drugs for the picker, annotated with which are already monitored.
+
+    With no filter this returns the opening page of the catalogue.
+    """
+    return list_drugs(db, q, limit)
+
+
 @router.get("/drugs/search", response_model=list[DrugConceptOut])
 def search_drug_catalog(
     q: str = Query(min_length=2, description="Drug name fragment"),
@@ -483,7 +499,7 @@ def search_drug_catalog(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ) -> list[dict]:
-    return search_drugs(db, q, limit)
+    return list_drugs(db, q, limit)
 
 
 @router.get("/drugs/status", response_model=DrugCatalogStatus)
@@ -847,6 +863,49 @@ async def trigger_search(
         ) from e
 
 
+async def _resolve_targets(
+    db: Session,
+    *,
+    drugs: list[DrugRef],
+    product_ids: list[int],
+    actor: str,
+) -> list[Product]:
+    """Turn a picked drug list into the products to search.
+
+    Products are an internal record, so selecting a drug that is not yet
+    monitored provisions one rather than making the user set it up first.
+    """
+    if not drugs and not product_ids:
+        raise HTTPException(400, "Select at least one drug")
+
+    targets: list[Product] = []
+    seen: set[int] = set()
+
+    for pid in product_ids:
+        product = db.get(Product, pid)
+        if not product:
+            raise HTTPException(400, f"Product {pid} not found")
+        if product.id not in seen:
+            seen.add(product.id)
+            targets.append(product)
+
+    for drug in drugs:
+        product = await resolve_drug_to_product(
+            db,
+            name=drug.name,
+            rxcui=drug.rxcui,
+            tty=drug.tty,
+            actor=actor,
+            build_query=build_starter_query,
+        )
+        if product.id not in seen:
+            seen.add(product.id)
+            targets.append(product)
+
+    db.commit()
+    return targets
+
+
 @router.post("/search-runs/run-now")
 async def run_search_now(
     body: RunSearchNowIn,
@@ -855,10 +914,10 @@ async def run_search_now(
         require_roles(Role.PV_LEAD, Role.ADMIN, Role.REVIEWER, Role.SENIOR_REVIEWER)
     ),
 ) -> dict:
-    """Run a manual search across several products at once.
+    """Run a manual search across several drugs at once.
 
-    Each product is searched independently and one product failing does not
-    abort the rest — the caller gets a per-product result either way.
+    Each drug is searched independently and one failing does not abort the
+    rest — the caller gets a per-drug result either way.
     """
     date_from = body.date_from
     date_to = body.date_to
@@ -868,14 +927,13 @@ async def run_search_now(
     if date_from and date_to and date_from > date_to:
         raise HTTPException(400, "date_from must be on or before date_to")
 
+    targets = await _resolve_targets(
+        db, drugs=body.drugs, product_ids=body.product_ids, actor=user.email
+    )
+
     results: list[dict] = []
-    for product_id in body.product_ids:
-        product = db.get(Product, product_id)
-        if not product:
-            results.append(
-                {"product_id": product_id, "status": "failed", "error": "Product not found"}
-            )
-            continue
+    for product in targets:
+        product_id = product.id
         search_string = active_search_string(db, product_id)
         if not search_string:
             results.append(
@@ -883,7 +941,7 @@ async def run_search_now(
                     "product_id": product_id,
                     "product_name": product.name,
                     "status": "failed",
-                    "error": "No active search string for this product",
+                    "error": "No active search string for this drug",
                 }
             )
             continue
@@ -930,7 +988,7 @@ async def run_search_now(
 
     ok = [r for r in results if r["status"] == "completed"]
     return {
-        "requested": len(body.product_ids),
+        "requested": len(targets),
         "succeeded": len(ok),
         "failed": len(results) - len(ok),
         "new_articles": sum(r.get("new_articles", 0) for r in ok),
@@ -964,14 +1022,14 @@ def list_search_schedules(
 
 
 @router.post("/search-schedules", response_model=list[SearchScheduleOut], status_code=201)
-def create_search_schedules(
+async def create_search_schedules(
     body: SearchScheduleCreate,
     db: Session = Depends(get_db),
     user: User = Depends(
         require_roles(Role.PV_LEAD, Role.ADMIN, Role.REVIEWER, Role.SENIOR_REVIEWER)
     ),
 ) -> list[SearchScheduleOut]:
-    """Automate a recurring search for one or more products."""
+    """Automate a recurring search for one or more drugs."""
     today = datetime.now(timezone.utc).date()
     if body.end_date < today:
         raise HTTPException(400, "end_date cannot be in the past")
@@ -981,19 +1039,20 @@ def create_search_schedules(
         start_at = start_at.replace(tzinfo=timezone.utc)
 
     lookback = body.lookback_days or default_lookback_days(body.frequency)
+    targets = await _resolve_targets(
+        db, drugs=body.drugs, product_ids=body.product_ids, actor=user.email
+    )
 
     created: list[SearchSchedule] = []
-    for product_id in body.product_ids:
-        product = db.get(Product, product_id)
-        if not product or not product.is_active:
-            raise HTTPException(400, f"Product {product_id} not found or inactive")
+    for product in targets:
+        product_id = product.id
         if not active_search_string(db, product_id):
             raise HTTPException(
                 400,
-                f"Product '{product.name}' has no active search string to schedule",
+                f"'{product.name}' has no active search string to schedule",
             )
-        # One active schedule per product keeps the runner predictable; a new
-        # one supersedes the old rather than doubling up on NCBI calls.
+        # One active schedule per drug keeps the runner predictable; a new one
+        # supersedes the old rather than doubling up on NCBI calls.
         for old in db.scalars(
             select(SearchSchedule).where(
                 SearchSchedule.product_id == product_id,

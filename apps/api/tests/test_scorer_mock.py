@@ -18,9 +18,9 @@ def test_mock_scorer_flags_case_report(monkeypatch):
     monkeypatch.setattr(settings, "llm_mock", True)
     out, model, is_mock, meta = asyncio.run(
         score_article(
-            title="Fatal hepatotoxicity with DrugX in a 67-year-old woman: a case report",
-            abstract="We report a patient who died after DrugX. Adverse reaction described.",
-            product_names=["DrugX", "drugxanib"],
+            title="Fatal hepatotoxicity with atorvastatin in a 67-year-old woman: a case report",
+            abstract="We report a patient who died after atorvastatin. Adverse reaction described.",
+            product_names=["atorvastatin", "Lipitor"],
         )
     )
     assert is_mock
@@ -40,13 +40,13 @@ def test_build_user_payload_schema_keys():
     payload = build_user_payload(
         title="T",
         abstract="A",
-        product_names=["DrugX"],
+        product_names=["atorvastatin"],
         mesh_terms=["Rash"],
         journal="J",
     )
     for key in PROMPT_USER_TEMPLATE_KEYS:
         assert key in payload
-    assert payload["monitored_products"] == ["DrugX"]
+    assert payload["monitored_products"] == ["atorvastatin"]
     assert "properties" in payload["schema"] or "$defs" in payload["schema"] or payload["schema"]
 
 
@@ -55,7 +55,7 @@ def test_parse_llm_screening_json_valid():
         "product_match": 0.9,
         "event_relevance": 0.8,
         "icsr_criteria_match": 0.7,
-        "entities": {"drugs": ["DrugX"], "events": ["rash"]},
+        "entities": {"drugs": ["atorvastatin"], "events": ["rash"]},
         "icsr_precheck": {
             "identifiable_patient": {
                 "present": True,
@@ -64,7 +64,7 @@ def test_parse_llm_screening_json_valid():
             },
             "suspect_drug": {
                 "present": True,
-                "evidence": "DrugX",
+                "evidence": "atorvastatin",
                 "confidence": 0.9,
             },
             "adverse_event": {
@@ -79,7 +79,7 @@ def test_parse_llm_screening_json_valid():
             },
         },
         "reason_tags": [
-            {"code": "brand_match", "label": "DrugX", "confidence": 0.9}
+            {"code": "brand_match", "label": "atorvastatin", "confidence": 0.9}
         ],
         "hard_rule_candidates": [],
         "summary_for_reviewer": "Likely relevant case report",

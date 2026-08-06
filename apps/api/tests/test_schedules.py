@@ -28,7 +28,7 @@ def session():
 
 
 def _schedule(db, **over):
-    product = Product(name=over.pop("product_name", "Testodrug"), brands=[], synonyms=[])
+    product = Product(name=over.pop("product_name", "warfarin"), brands=[], synonyms=[])
     db.add(product)
     db.flush()
     db.add(

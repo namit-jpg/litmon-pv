@@ -70,6 +70,17 @@ export type DrugConcept = {
   tty: string;
   /** Human-readable form of `tty`. */
   kind: string;
+  /** Whether this drug is already being searched. */
+  is_monitored: boolean;
+  product_id?: number | null;
+  article_count: number;
+};
+
+/** A drug the user picked. The backing record is created server-side. */
+export type DrugRef = {
+  name: string;
+  rxcui?: string;
+  tty?: string;
 };
 
 export type DrugCatalogStatus = {
@@ -445,6 +456,11 @@ export const api = {
       }),
     }),
   // ── Drug catalogue (NLM RxNorm mirror) ──
+  /** Drugs for the picker. With no query this returns the opening page. */
+  listDrugs: (q = "", limit?: number) =>
+    request<DrugConcept[]>(
+      `/api/drugs${qs({ q: q || undefined, limit: limit ? String(limit) : undefined })}`
+    ),
   searchDrugs: (q: string, limit?: number) =>
     request<DrugConcept[]>(
       `/api/drugs/search${qs({ q, limit: limit ? String(limit) : undefined })}`
@@ -474,7 +490,8 @@ export const api = {
 
   // ── Manual and scheduled search ──
   runSearchNow: (body: {
-    product_ids: number[];
+    drugs?: DrugRef[];
+    product_ids?: number[];
     date_from?: string;
     date_to?: string;
     days?: number;
@@ -487,7 +504,8 @@ export const api = {
   searchSchedules: () =>
     request<SearchSchedule[]>("/api/search-schedules"),
   createSchedules: (body: {
-    product_ids: number[];
+    drugs?: DrugRef[];
+    product_ids?: number[];
     frequency: ScheduleFrequency;
     end_date: string;
     lookback_days?: number;

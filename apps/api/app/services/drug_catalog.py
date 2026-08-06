@@ -1,8 +1,8 @@
 """Local mirror of the NLM RxNorm drug catalogue.
 
-The product picker searches this table rather than calling RxNorm per
-keystroke, so it responds instantly and keeps working offline once synced.
-Nothing in here is hand-authored — every row comes from RxNorm.
+The drug picker searches this table rather than calling RxNorm per keystroke,
+so it responds instantly and keeps working offline once synced. Nothing in here
+is hand-authored — every row is a real, currently-marketed drug from RxNorm.
 """
 
 from __future__ import annotations
@@ -10,11 +10,11 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
-from app.models import ActiveIngredient, DrugConcept
+from app.models import ActiveIngredient, Article, DrugConcept, Product, SearchString
 from app.services.audit import log_event
 from app.services.rxnorm import RxNormClient, RxNormError
 from app.services.rxnorm.client import TTY_LABEL
@@ -121,6 +121,86 @@ async def derive_ingredient_names(
     return []
 
 
+async def resolve_drug_to_product(
+    db: Session,
+    *,
+    name: str,
+    rxcui: str | None,
+    tty: str | None,
+    actor: str,
+    build_query,
+) -> Product:
+    """Return the product backing a drug, creating it on first use.
+
+    Monitoring a drug needs a product row to hang articles, search strings and
+    triage off, but that is bookkeeping the user should never have to perform.
+    Picking a drug and searching is enough; this fills in the rest.
+    """
+    clean = name.strip()
+    product = db.scalars(
+        select(Product).where(func.lower(Product.name) == clean.lower())
+    ).first()
+
+    if product:
+        if not product.is_active:
+            product.is_active = True
+            log_event(
+                db,
+                actor=actor,
+                action="product_reactivated",
+                entity_type="product",
+                entity_id=str(product.id),
+                payload={"name": product.name, "via": "drug_search"},
+            )
+        if not product.active_ingredients:
+            derived = await derive_ingredient_names(rxcui, product.name, tty)
+            if derived:
+                product.active_ingredients = get_or_create_ingredients(db, derived)
+                if not product.inn:
+                    product.inn = derived[0]
+        db.flush()
+        return product
+
+    product = Product(
+        name=clean,
+        inn=clean.lower() if tty == "IN" else None,
+        brands=[clean] if tty == "BN" else [],
+        synonyms=[],
+        is_active=True,
+    )
+    db.add(product)
+    db.flush()
+
+    derived = await derive_ingredient_names(rxcui, clean, tty)
+    if derived:
+        product.active_ingredients = get_or_create_ingredients(db, derived)
+        if not product.inn:
+            product.inn = derived[0]
+
+    names = [product.name, product.inn or "", *product.brands]
+    names += [t.name for t in product.active_ingredients]
+    db.add(
+        SearchString(
+            product_id=product.id,
+            version=1,
+            query_text=build_query([n for n in names if n]),
+            is_active=True,
+            approved_by=actor,
+            notes="Generated when the drug was first searched; review before relying on it.",
+        )
+    )
+    log_event(
+        db,
+        actor=actor,
+        action="product_created",
+        entity_type="product",
+        entity_id=str(product.id),
+        payload={"name": product.name, "rxcui": rxcui, "via": "drug_search"},
+    )
+    db.flush()
+    return product
+
+
 def get_or_create_ingredients(db: Session, names: list[str]) -> list[ActiveIngredient]:
     """Resolve substance names to tag rows, reusing any that already exist.
 
@@ -152,23 +232,131 @@ def get_or_create_ingredients(db: Session, names: list[str]) -> list[ActiveIngre
     return tags
 
 
-def search_drugs(db: Session, query: str, limit: int | None = None) -> list[dict]:
-    """Rank drug concepts against a typed query.
+# Characters that mark an RxNorm entry as a chemical descriptor rather than a
+# name a person would recognise, e.g. "(-)-ambroxide" or a bis(...)ester.
+_UNREADABLE = set("()[]{},;")
 
-    Ordering is prefix match first, then substring, then term type, then
-    shortest name — so "atorva" puts "atorvastatin" above
-    "atorvastatin / amlodipine".
+
+def _is_readable(name: str) -> bool:
+    """Whether a concept name reads as a medicine rather than a formula."""
+    if len(name) > 45:
+        return False
+    return not any(ch in _UNREADABLE for ch in name)
+
+
+def _monitored_index(db: Session) -> dict[str, dict]:
+    """Map lower-cased product name to its monitoring state.
+
+    Lets the picker show what is already being watched without the caller
+    issuing a query per drug.
+    """
+    counts = dict(
+        db.execute(
+            select(Article.product_id, func.count(Article.id)).group_by(
+                Article.product_id
+            )
+        ).all()
+    )
+    index: dict[str, dict] = {}
+    for p in db.scalars(select(Product).where(Product.is_active.is_(True))).all():
+        index[p.name.lower()] = {
+            "product_id": p.id,
+            "article_count": counts.get(p.id, 0),
+            "name": p.name,
+        }
+    return index
+
+
+def _monitored_entries(
+    monitored: dict[str, dict], by_name: dict[str, DrugConcept], term: str
+) -> list[dict]:
+    """Picker rows for drugs already being watched.
+
+    Built from what is monitored rather than from the catalogue, so a drug
+    stays visible even if the catalogue has not been synced or no longer
+    carries that concept. Otherwise a user could be monitoring something they
+    can no longer see or stop.
+    """
+    out: list[dict] = []
+    for key, state in sorted(monitored.items()):
+        if term and term not in key:
+            continue
+        concept = by_name.get(key)
+        out.append(
+            {
+                "rxcui": concept.rxcui if concept else f"local:{state['product_id']}",
+                "name": state["name"],
+                "tty": concept.tty if concept else "IN",
+                "kind": TTY_LABEL.get(concept.tty, "drug") if concept else "drug",
+                "is_monitored": True,
+                "product_id": state["product_id"],
+                "article_count": state["article_count"],
+            }
+        )
+    return out
+
+
+def list_drugs(db: Session, query: str = "", limit: int | None = None) -> list[dict]:
+    """Drugs for the picker, annotated with what is already monitored.
+
+    With no query this returns the opening page of the catalogue; with one it
+    ranks exact match, then prefix, then substring, so "atorva" puts
+    "atorvastatin" above "atorvastatin / amlodipine".
     """
     settings = get_settings()
     cap = limit or settings.drug_search_limit
     term = (query or "").strip().lower()
-    if len(term) < 2:
-        return []
+    monitored = _monitored_index(db)
+
+    def decorate(c: DrugConcept) -> dict:
+        state = monitored.get(c.name.lower())
+        return {
+            "rxcui": c.rxcui,
+            "name": c.name,
+            "tty": c.tty,
+            "kind": TTY_LABEL.get(c.tty, c.tty),
+            "is_monitored": state is not None,
+            "product_id": state["product_id"] if state else None,
+            "article_count": state["article_count"] if state else 0,
+        }
+
+    # Whatever is already monitored goes first and always appears, so the
+    # picker doubles as the list of what is being watched.
+    watched_concepts = {
+        c.name_lower: c
+        for c in db.scalars(
+            select(DrugConcept).where(DrugConcept.name_lower.in_(monitored.keys()))
+        ).all()
+    }
+    head = _monitored_entries(monitored, watched_concepts, term)
+    remaining = max(cap - len(head), 0)
+
+    if not term:
+        # Opening page. Names sorting below "a" are punctuation-led chemical
+        # descriptors, so start at the letters and drop the rest in Python.
+        rows = db.scalars(
+            select(DrugConcept)
+            .where(DrugConcept.tty == "IN", DrugConcept.name_lower >= "a")
+            .order_by(DrugConcept.name_lower)
+            .limit(cap * 30)
+        ).all()
+        # International Nonproprietary Names are single tokens — "atorvastatin",
+        # "metformin". Requiring that keeps the opening list to recognisable
+        # medicines instead of botanical entries like "Acacia bark extract".
+        # The filter still reaches every concept, multi-word ones included.
+        tail = [
+            c
+            for c in rows
+            if _is_readable(c.name)
+            and " " not in c.name.strip()
+            and c.name_lower not in monitored
+        ][:remaining]
+        return head + [decorate(c) for c in tail]
 
     like = f"%{term}%"
     rows = db.scalars(
         select(DrugConcept)
-        .where(or_(DrugConcept.name_lower.like(like)))
+        .where(DrugConcept.name_lower.like(like))
         # Over-fetch so Python-side ranking has candidates to sort, but stay
         # bounded: without this a query like "a" would pull the whole table.
         .limit(cap * 10)
@@ -186,13 +374,5 @@ def search_drugs(db: Session, query: str, limit: int | None = None) -> list[dict
             bucket = 3
         return (bucket, _TTY_RANK.get(c.tty, 9), len(n), n)
 
-    rows = sorted(rows, key=rank)[:cap]
-    return [
-        {
-            "rxcui": c.rxcui,
-            "name": c.name,
-            "tty": c.tty,
-            "kind": TTY_LABEL.get(c.tty, c.tty),
-        }
-        for c in rows
-    ]
+    ranked = [c for c in sorted(rows, key=rank) if c.name_lower not in monitored]
+    return head + [decorate(c) for c in ranked[:remaining]]

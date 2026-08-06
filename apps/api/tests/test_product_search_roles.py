@@ -61,20 +61,20 @@ PV_LEAD = (Role.PV_LEAD, "l@t.local")
 
 def test_reviewer_cannot_create_or_delete_products():
     c = _as(*REVIEWER)
-    assert c.post("/api/products", json={"name": "Nope"}).status_code == 403
+    assert c.post("/api/products", json={"name": "naproxen"}).status_code == 403
     assert c.delete("/api/products/1").status_code == 403
 
 
 def test_pv_lead_can_create_product_and_gets_a_search_string():
     c = _as(*PV_LEAD)
-    r = c.post("/api/products", json={"name": "Roletest", "inn": "roletest"})
+    r = c.post("/api/products", json={"name": "rosuvastatin", "inn": "rosuvastatin"})
     assert r.status_code == 201, r.text
     pid = r.json()["id"]
 
     strings = c.get(f"/api/search-strings?product_id={pid}").json()
     assert len(strings) == 1
     q = strings[0]["query_text"]
-    assert "Roletest" in q and "adverse" in q
+    assert "rosuvastatin" in q and "adverse" in q
     assert strings[0]["is_active"] is True
 
 
@@ -118,27 +118,28 @@ def test_same_substance_across_products_reuses_one_tag():
 def test_reactivated_product_regains_its_substance_tags():
     """Re-adding a removed product must not bring it back untagged."""
     c = _as(*PV_LEAD)
-    body = {"name": "reactivateme", "tty": "IN"}
+    body = {"name": "ezetimibe", "tty": "IN"}
     first = c.post("/api/products", json=body).json()
-    assert [t["name"] for t in first["active_ingredients"]] == ["reactivateme"]
+    assert [t["name"] for t in first["active_ingredients"]] == ["ezetimibe"]
 
     c.delete(f"/api/products/{first['id']}")
     again = c.post("/api/products", json=body)
     assert again.status_code == 201, again.text
     assert again.json()["id"] == first["id"], "should reuse the row, not duplicate"
-    assert [t["name"] for t in again.json()["active_ingredients"]] == ["reactivateme"]
+    assert [t["name"] for t in again.json()["active_ingredients"]] == ["ezetimibe"]
 
 
 def test_duplicate_product_name_is_rejected():
+    """Matched case-insensitively, or the same drug could be added twice."""
     c = _as(*PV_LEAD)
-    c.post("/api/products", json={"name": "Dupetest"})
-    assert c.post("/api/products", json={"name": "dupetest"}).status_code == 409
+    assert c.post("/api/products", json={"name": "pravastatin"}).status_code == 201
+    assert c.post("/api/products", json={"name": "Pravastatin"}).status_code == 409
 
 
 def test_reviewer_can_search_and_schedule():
     """Reviewers run searches — that is the point of the Product Search tab."""
     lead = _as(*PV_LEAD)
-    pid = lead.post("/api/products", json={"name": "Schedtest"}).json()["id"]
+    pid = lead.post("/api/products", json={"name": "lovastatin"}).json()["id"]
 
     c = _as(*REVIEWER)
     r = c.post(
@@ -156,7 +157,7 @@ def test_reviewer_can_search_and_schedule():
 
 def test_schedule_end_date_cannot_be_in_the_past():
     lead = _as(*PV_LEAD)
-    pid = lead.post("/api/products", json={"name": "Pasttest"}).json()["id"]
+    pid = lead.post("/api/products", json={"name": "fluvastatin"}).json()["id"]
     r = lead.post(
         "/api/search-schedules",
         json={
@@ -171,7 +172,7 @@ def test_schedule_end_date_cannot_be_in_the_past():
 def test_new_schedule_supersedes_the_previous_one():
     """Two active schedules for one product would double-hit NCBI."""
     c = _as(*PV_LEAD)
-    pid = c.post("/api/products", json={"name": "Supersede"}).json()["id"]
+    pid = c.post("/api/products", json={"name": "pitavastatin"}).json()["id"]
     body = {"product_ids": [pid], "frequency": "daily", "end_date": "2099-01-01"}
     first = c.post("/api/search-schedules", json=body).json()[0]
     c.post("/api/search-schedules", json={**body, "frequency": "weekly"})
@@ -184,6 +185,59 @@ def test_new_schedule_supersedes_the_previous_one():
     assert len(active) == 1
     assert active[0]["frequency"] == "weekly"
     assert active[0]["id"] != first["id"]
+
+
+def test_scheduling_a_drug_provisions_it_without_a_setup_step():
+    """Picking a drug is the whole workflow — no create-it-first step."""
+    c = _as(*PV_LEAD)
+    r = c.post(
+        "/api/search-schedules",
+        json={
+            "drugs": [{"name": "celecoxib", "tty": "IN"}],
+            "frequency": "daily",
+            "end_date": "2099-01-01",
+        },
+    )
+    assert r.status_code == 201, r.text
+    schedule = r.json()[0]
+    assert schedule["product_name"] == "celecoxib"
+
+    # It came with a usable search string and its substance tag.
+    strings = c.get(
+        f"/api/search-strings?product_id={schedule['product_id']}"
+    ).json()
+    assert len(strings) == 1 and "celecoxib" in strings[0]["query_text"]
+
+    listed = c.get("/api/drugs?q=celecoxib").json()
+    match = next((d for d in listed if d["name"] == "celecoxib"), None)
+    assert match and match["is_monitored"] is True
+
+
+def test_picking_the_same_drug_twice_reuses_one_record():
+    c = _as(*PV_LEAD)
+    body = {
+        "drugs": [{"name": "naproxen", "tty": "IN"}],
+        "frequency": "weekly",
+        "end_date": "2099-01-01",
+    }
+    first = c.post("/api/search-schedules", json=body).json()[0]
+    second = c.post("/api/search-schedules", json=body).json()[0]
+    assert first["product_id"] == second["product_id"]
+
+
+def test_search_requires_a_selection():
+    c = _as(*PV_LEAD)
+    r = c.post("/api/search-runs/run-now", json={"days": 7})
+    assert r.status_code == 400
+    assert "at least one drug" in r.text.lower()
+
+
+def test_drug_list_returns_a_bounded_opening_page():
+    """The picker must never try to render the whole catalogue."""
+    c = _as(*REVIEWER)
+    rows = c.get("/api/drugs").json()
+    assert len(rows) <= 100
+    assert all("name" in d and "kind" in d for d in rows)
 
 
 def test_reviewer_is_blocked_from_ops_surfaces():

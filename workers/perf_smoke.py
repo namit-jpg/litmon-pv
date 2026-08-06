@@ -40,9 +40,9 @@ async def run(n: int, keep: bool) -> None:
             art = Article(
                 product_id=product.id,
                 pmid=f"perf{int(time.time())}{i:05d}"[:20],
-                title=f"Perf smoke abstract {i} DrugX adverse event case report",
+                title=f"Perf smoke abstract {i} atorvastatin adverse event case report",
                 abstract=(
-                    f"We report patient {i} with rash after DrugX. "
+                    f"We report patient {i} with rash after atorvastatin. "
                     "Authors describe the adverse reaction."
                     if i % 5 != 0
                     else f"Unrelated physiology paper number {i} with no drug mention."

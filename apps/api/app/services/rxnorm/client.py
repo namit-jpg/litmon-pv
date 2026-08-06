@@ -24,6 +24,12 @@ from app.services.rxnorm.errors import RxNormError
 # Oral Tablet" is a packaging detail, not something you monitor literature for.
 CATALOG_TTYS = ("IN", "MIN", "BN")
 
+# The "Prescribe" subset is RxNorm restricted to currently-marketed drugs.
+# Using it over the full vocabulary drops ~12k research chemicals and withdrawn
+# substances that nobody runs literature monitoring against, leaving a
+# catalogue where every entry is a real, prescribable medicine.
+PRESCRIBABLE_PATH = "Prescribe"
+
 TTY_LABEL = {
     "IN": "ingredient",
     "MIN": "combination",
@@ -93,16 +99,18 @@ class RxNormClient:
     async def fetch_catalog(
         self, ttys: tuple[str, ...] = CATALOG_TTYS
     ) -> list[RxNormConceptDTO]:
-        """Download the full ingredient / combination / brand concept list.
+        """Download the marketed ingredient / combination / brand concepts.
 
-        One call per term type (~23k concepts total, a few seconds). Mirroring
-        this locally is what keeps the product picker instant and usable with
-        no network, instead of paying a round trip per keystroke.
+        One call per term type (~11k concepts, a few seconds). Mirroring this
+        locally keeps the drug picker instant and usable with no network,
+        instead of paying a round trip per keystroke.
         """
         out: list[RxNormConceptDTO] = []
         seen: set[str] = set()
         for tty in ttys:
-            data = await self._get("allconcepts.json", {"tty": tty})
+            data = await self._get(
+                f"{PRESCRIBABLE_PATH}/allconcepts.json", {"tty": tty}
+            )
             concepts = (data.get("minConceptGroup") or {}).get("minConcept") or []
             for c in concepts:
                 rxcui = str(c.get("rxcui") or "").strip()
