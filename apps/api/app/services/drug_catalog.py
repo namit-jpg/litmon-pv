@@ -7,16 +7,19 @@ Nothing in here is hand-authored — every row comes from RxNorm.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
-from app.models import DrugConcept
+from app.models import ActiveIngredient, DrugConcept
 from app.services.audit import log_event
-from app.services.rxnorm import RxNormClient
+from app.services.rxnorm import RxNormClient, RxNormError
 from app.services.rxnorm.client import TTY_LABEL
+
+logger = logging.getLogger("litmon.drug_catalog")
 
 # Ingredient beats brand beats combination when scores tie: searching
 # "atorvastatin" should surface the substance before "Lipitor".
@@ -77,6 +80,76 @@ async def sync_catalog(db: Session, *, actor: str = "system") -> dict[str, int]:
     )
     db.commit()
     return result
+
+
+async def derive_ingredient_names(
+    rxcui: str | None, name: str, tty: str | None
+) -> list[str]:
+    """Work out the active substances behind a picked drug concept.
+
+    Ingredients are themselves the substance; a combination carries several,
+    separated by "/" in RxNorm; a brand needs a lookup to find what is in it.
+    Returns lower-cased names ready to become ActiveIngredient tags.
+
+    Best-effort by design — a product must still be creatable when RxNorm is
+    unreachable, just without tags.
+    """
+    if tty == "MIN" or "/" in name:
+        parts = [p.strip().lower() for p in name.split("/")]
+        return [p for p in parts if p]
+    if tty == "IN":
+        return [name.strip().lower()]
+    if tty == "BN" and rxcui:
+        try:
+            async with RxNormClient() as client:
+                related = await client.related_names(rxcui)
+        except Exception:  # noqa: BLE001 - tags are best-effort, creation is not
+            logger.warning(
+                "Could not resolve ingredients for brand %s; creating it untagged",
+                name,
+                exc_info=True,
+            )
+            return []
+        names = related.get("IN") or related.get("MIN") or []
+        out: list[str] = []
+        for n in names:
+            for part in n.split("/"):
+                part = part.strip().lower()
+                if part and part not in out:
+                    out.append(part)
+        return out
+    return []
+
+
+def get_or_create_ingredients(db: Session, names: list[str]) -> list[ActiveIngredient]:
+    """Resolve substance names to tag rows, reusing any that already exist.
+
+    Names are matched case-insensitively so "Metformin" and "metformin" cannot
+    become two separate substances.
+    """
+    tags: list[ActiveIngredient] = []
+    for raw in names:
+        cleaned = (raw or "").strip().lower()
+        if not cleaned:
+            continue
+        row = db.scalars(
+            select(ActiveIngredient).where(
+                func.lower(ActiveIngredient.name) == cleaned
+            )
+        ).first()
+        if row is None:
+            row = db.scalars(
+                select(ActiveIngredient).where(
+                    func.lower(ActiveIngredient.inn) == cleaned
+                )
+            ).first()
+        if row is None:
+            row = ActiveIngredient(name=cleaned, inn=cleaned, is_active=True)
+            db.add(row)
+            db.flush()
+        if row not in tags:
+            tags.append(row)
+    return tags
 
 
 def search_drugs(db: Session, query: str, limit: int | None = None) -> list[dict]:

@@ -459,6 +459,8 @@ export const api = {
     name: string;
     inn?: string;
     rxcui?: string;
+    /** RxNorm term type, so the server can derive the active substances. */
+    tty?: string;
     brands?: string[];
     synonyms?: string[];
     query_text?: string;

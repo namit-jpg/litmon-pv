@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
+  DrugCatalogStatus,
   DrugConcept,
   Product,
   RunNowResult,
@@ -63,7 +64,8 @@ export default function ProductSearchPage() {
   const [drugQuery, setDrugQuery] = useState("");
   const [drugResults, setDrugResults] = useState<DrugConcept[]>([]);
   const [drugSearching, setDrugSearching] = useState(false);
-  const [catalogTotal, setCatalogTotal] = useState<number | null>(null);
+  const [catalog, setCatalog] = useState<DrugCatalogStatus | null>(null);
+  const [syncing, setSyncing] = useState(false);
   const debounce = useRef<number | undefined>(undefined);
 
   async function load() {
@@ -77,12 +79,17 @@ export default function ProductSearchPage() {
     }
   }
 
+  async function loadCatalog() {
+    try {
+      setCatalog(await api.drugCatalogStatus());
+    } catch {
+      setCatalog(null);
+    }
+  }
+
   useEffect(() => {
     load();
-    api
-      .drugCatalogStatus()
-      .then((s) => setCatalogTotal(s.total))
-      .catch(() => setCatalogTotal(null));
+    loadCatalog();
   }, []);
 
   // Debounced typeahead against the local RxNorm mirror.
@@ -113,6 +120,10 @@ export default function ProductSearchPage() {
     [products]
   );
 
+  // A fresh install has no catalogue, and without one the picker silently
+  // returns nothing — so surface the download instead of an empty box.
+  const catalogEmpty = !catalog || catalog.total === 0;
+
   async function wrap(fn: () => Promise<void>) {
     setBusy(true);
     setError("");
@@ -139,6 +150,7 @@ export default function ProductSearchPage() {
       const created = await api.createProduct({
         name: drug.name,
         rxcui: drug.rxcui,
+        tty: drug.tty,
         inn: drug.tty === "IN" ? drug.name : undefined,
         brands: drug.tty === "BN" ? [drug.name] : [],
       });
@@ -172,28 +184,75 @@ export default function ProductSearchPage() {
 
       {canManageProducts && (
         <section className="card">
-          <h2>Add a product to monitor</h2>
-          <p className="muted">
-            Search the NLM RxNorm drug catalogue
-            {catalogTotal ? ` (${catalogTotal.toLocaleString()} drugs)` : ""}. Showing
-            up to 100 matches.
-          </p>
-          <label>
-            Drug name
-            <input
-              value={drugQuery}
-              onChange={(e) => setDrugQuery(e.target.value)}
-              placeholder="Start typing, e.g. atorvastatin or Lipitor…"
-            />
-          </label>
-          {drugSearching && <p className="muted">Searching…</p>}
-          {drugQuery.trim().length >= 2 &&
-            !drugSearching &&
-            drugResults.length === 0 && (
+          <div className="page-head compact">
+            <div>
+              <h2>Add a product to monitor</h2>
               <p className="muted">
-                No matches. If the catalogue is empty, sync it from Admin first.
+                Search the NLM RxNorm drug catalogue
+                {catalogEmpty
+                  ? " — not downloaded yet"
+                  : ` (${catalog!.total.toLocaleString()} drugs, synced ${formatDateTime(
+                      catalog!.last_synced_at
+                    )})`}
+                . Showing up to 100 matches.
               </p>
-            )}
+            </div>
+            <button
+              className={catalogEmpty ? "btn primary" : "btn"}
+              disabled={syncing || busy}
+              title="Download the latest drug list from NLM RxNorm"
+              onClick={() =>
+                wrap(async () => {
+                  setSyncing(true);
+                  try {
+                    const s = await api.syncDrugCatalog();
+                    setCatalog(s);
+                    setMsg(
+                      `Drug catalogue synced — ${s.total.toLocaleString()} drugs available.`
+                    );
+                  } finally {
+                    setSyncing(false);
+                  }
+                })
+              }
+            >
+              {syncing
+                ? "Syncing…"
+                : catalogEmpty
+                ? "Download drug catalogue"
+                : "Re-sync"}
+            </button>
+          </div>
+
+          {catalogEmpty ? (
+            <div className="empty">
+              <p>The drug catalogue has not been downloaded yet.</p>
+              <p className="muted">
+                Download it once (about 23,000 drugs, a few seconds, needs
+                internet). It is then stored locally and works offline.
+              </p>
+            </div>
+          ) : (
+            <>
+              <label>
+                Drug name
+                <input
+                  value={drugQuery}
+                  onChange={(e) => setDrugQuery(e.target.value)}
+                  placeholder="Start typing, e.g. atorvastatin or Lipitor…"
+                />
+              </label>
+              {drugSearching && <p className="muted">Searching…</p>}
+              {drugQuery.trim().length >= 2 &&
+                !drugSearching &&
+                drugResults.length === 0 && (
+                  <p className="muted">
+                    No drug matches “{drugQuery.trim()}”. Try the ingredient name
+                    rather than a formulation.
+                  </p>
+                )}
+            </>
+          )}
           {drugResults.length > 0 && (
             <div className="drug-results">
               {drugResults.map((d) => {

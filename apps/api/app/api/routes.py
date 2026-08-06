@@ -79,6 +79,8 @@ from app.services.audit import log_event
 from app.services.alerts import create_alert, mark_alert_read
 from app.services.drug_catalog import (
     catalog_size,
+    derive_ingredient_names,
+    get_or_create_ingredients,
     last_synced_at,
     search_drugs,
     sync_catalog,
@@ -311,7 +313,7 @@ def build_starter_query(names: list[str]) -> str:
 
 
 @router.post("/products", response_model=ProductOut, status_code=201)
-def create_product(
+async def create_product(
     body: ProductCreate,
     db: Session = Depends(get_db),
     user: User = Depends(require_roles(Role.PV_LEAD, Role.ADMIN)),
@@ -330,17 +332,29 @@ def create_product(
         # Reactivate rather than create a duplicate row, so the product keeps
         # its article history and audit trail.
         existing.is_active = True
-        db.commit()
-        db.refresh(existing)
+        # A product retired before tag derivation existed comes back untagged,
+        # which would silently empty its substance column — so backfill here.
+        if not existing.active_ingredients:
+            derived = await derive_ingredient_names(
+                body.rxcui, existing.name, body.tty
+            )
+            if derived:
+                existing.active_ingredients = get_or_create_ingredients(db, derived)
+                if not existing.inn:
+                    existing.inn = derived[0]
         log_event(
             db,
             actor=user.email,
             action="product_reactivated",
             entity_type="product",
             entity_id=str(existing.id),
-            payload={"name": existing.name},
+            payload={
+                "name": existing.name,
+                "active_ingredients": [t.name for t in existing.active_ingredients],
+            },
         )
         db.commit()
+        db.refresh(existing)
         return existing
 
     if body.primary_reviewer_id is not None:
@@ -358,6 +372,9 @@ def create_product(
         primary_reviewer_id=body.primary_reviewer_id,
     )
 
+    db.add(product)
+    db.flush()
+
     if body.active_ingredient_ids:
         tags = list(
             db.scalars(
@@ -371,9 +388,16 @@ def create_product(
         if missing:
             raise HTTPException(400, f"Unknown active_ingredient_ids: {missing}")
         product.active_ingredients = tags
-
-    db.add(product)
-    db.flush()
+    else:
+        # Derive the substances from the picked RxNorm concept. Without this a
+        # product created through the picker would carry no API tags at all,
+        # which empties the reviewer's substance column and drops
+        # activesubstancename from the E2B export.
+        derived = await derive_ingredient_names(body.rxcui, product.name, body.tty)
+        if derived:
+            product.active_ingredients = get_or_create_ingredients(db, derived)
+            if not product.inn:
+                product.inn = derived[0]
 
     query_text = (body.query_text or "").strip()
     if not query_text:

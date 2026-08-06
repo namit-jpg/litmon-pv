@@ -130,8 +130,11 @@ class RxNormClient:
         Used to prefill a new product's INN and brand list so the generated
         PubMed query covers trade names, not just the substance.
         """
+        # RxNorm expects the term types space-separated. Passing "IN+MIN+BN"
+        # here would be percent-encoded to %2B and rejected — in a query string
+        # "+" already *means* space.
         data = await self._get(
-            f"rxcui/{rxcui}/related.json", {"tty": "IN+MIN+BN"}
+            f"rxcui/{rxcui}/related.json", {"tty": " ".join(CATALOG_TTYS)}
         )
         groups = (data.get("relatedGroup") or {}).get("conceptGroup") or []
         result: dict[str, list[str]] = {"IN": [], "MIN": [], "BN": []}

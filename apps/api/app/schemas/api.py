@@ -102,6 +102,9 @@ class ProductCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     inn: Optional[str] = None
     rxcui: Optional[str] = None
+    # RxNorm term type of the picked concept (IN / MIN / BN). Used to derive
+    # the active substances when no explicit tags are supplied.
+    tty: Optional[str] = None
     brands: list[Any] = Field(default_factory=list)
     synonyms: list[Any] = Field(default_factory=list)
     atc_code: Optional[str] = None

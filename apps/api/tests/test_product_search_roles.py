@@ -78,6 +78,57 @@ def test_pv_lead_can_create_product_and_gets_a_search_string():
     assert strings[0]["is_active"] is True
 
 
+def test_ingredient_product_is_tagged_with_its_substance():
+    """A product with no API tags empties the reviewer's substance column and
+    drops activesubstancename from the E2B export."""
+    c = _as(*PV_LEAD)
+    r = c.post(
+        "/api/products",
+        json={"name": "simvastatin", "rxcui": "36567", "tty": "IN"},
+    )
+    assert r.status_code == 201, r.text
+    tags = [t["name"] for t in r.json()["active_ingredients"]]
+    assert tags == ["simvastatin"]
+
+
+def test_combination_product_is_tagged_with_every_substance():
+    """The whole point of many-to-many API tags is combination products."""
+    c = _as(*PV_LEAD)
+    r = c.post(
+        "/api/products",
+        json={"name": "amoxicillin / clavulanate", "rxcui": "19711", "tty": "MIN"},
+    )
+    assert r.status_code == 201, r.text
+    tags = sorted(t["name"] for t in r.json()["active_ingredients"])
+    assert tags == ["amoxicillin", "clavulanate"]
+
+
+def test_same_substance_across_products_reuses_one_tag():
+    """Otherwise querying by substance would miss half the products."""
+    c = _as(*PV_LEAD)
+    a = c.post("/api/products", json={"name": "ibuprofen", "tty": "IN"}).json()
+    b = c.post(
+        "/api/products", json={"name": "ibuprofen / famotidine", "tty": "MIN"}
+    ).json()
+    ids_a = {t["id"] for t in a["active_ingredients"]}
+    ids_b = {t["id"] for t in b["active_ingredients"]}
+    assert ids_a and ids_a < ids_b, "ibuprofen tag should be shared, not duplicated"
+
+
+def test_reactivated_product_regains_its_substance_tags():
+    """Re-adding a removed product must not bring it back untagged."""
+    c = _as(*PV_LEAD)
+    body = {"name": "reactivateme", "tty": "IN"}
+    first = c.post("/api/products", json=body).json()
+    assert [t["name"] for t in first["active_ingredients"]] == ["reactivateme"]
+
+    c.delete(f"/api/products/{first['id']}")
+    again = c.post("/api/products", json=body)
+    assert again.status_code == 201, again.text
+    assert again.json()["id"] == first["id"], "should reuse the row, not duplicate"
+    assert [t["name"] for t in again.json()["active_ingredients"]] == ["reactivateme"]
+
+
 def test_duplicate_product_name_is_rejected():
     c = _as(*PV_LEAD)
     c.post("/api/products", json={"name": "Dupetest"})
