@@ -110,7 +110,7 @@ def create_icsr_export(
 ) -> ExportPackage:
     articles = list(
         db.scalars(
-            select(Article).where(Article.status == ArticleStatus.DISPOSITION_VALID_ICSR)
+            select(Article).where(Article.status == ArticleStatus.APPROVED_FOR_SUBMISSION)
         ).all()
     )
     records = build_icsr_records(db, articles)
@@ -152,7 +152,7 @@ def create_cdsco_export(
     """Build the CDSCO / NCC-PvPI E2B(R2) XML package for confirmed ICSRs."""
     articles = list(
         db.scalars(
-            select(Article).where(Article.status == ArticleStatus.DISPOSITION_VALID_ICSR)
+            select(Article).where(Article.status == ArticleStatus.APPROVED_FOR_SUBMISSION)
         ).all()
     )
     records = build_icsr_records(db, articles)

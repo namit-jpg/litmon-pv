@@ -96,7 +96,7 @@ async def import_pmids_from_pubmed(
             publication_types=dto.publication_types,
             pubmed_url=dto.pubmed_url,
             content_hash=dto.content_hash,
-            status=ArticleStatus.INGESTED,
+            status=ArticleStatus.NEW_ALERT,
         )
         db.add(art)
         db.flush()
@@ -197,7 +197,7 @@ async def import_csv_rows(
             if dto
             else (f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/" if pmid.isdigit() else None),
             content_hash=dto.content_hash if dto else None,
-            status=ArticleStatus.INGESTED,
+            status=ArticleStatus.NEW_ALERT,
         )
         db.add(art)
         db.flush()

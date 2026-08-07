@@ -1,0 +1,1328 @@
+<title>LitMon-PV — MVP Wireframe</title>
+
+<style>
+:root{
+  --paper:#FAFAFB; --surface:#FFFFFF; --surface-2:#F1F2F6; --surface-3:#E7E9F0;
+  --line:#DEE1E9; --line-strong:#C3C8D6;
+  --ink:#171922; --ink-2:#565A6B; --ink-3:#8B90A0;
+  --accent:#2E3C8F; --accent-soft:#E8EAF6; --accent-line:#B6BEE4;
+  --crit:#A32118; --crit-soft:#FBEAE8;
+  --warn:#8A5A08; --warn-soft:#FAF1DF;
+  --ok:#1D6444; --ok-soft:#E5F2EB;
+  --sans:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+  --rail:210px; --note-col:300px;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --paper:#0F1116; --surface:#161922; --surface-2:#1D212B; --surface-3:#252A36;
+    --line:#2B3040; --line-strong:#3D4455;
+    --ink:#E7E9F0; --ink-2:#A0A6B6; --ink-3:#70768A;
+    --accent:#8E99F2; --accent-soft:#212740; --accent-line:#3C4573;
+    --crit:#F08078; --crit-soft:#2E1B1A;
+    --warn:#D9A441; --warn-soft:#2B2417;
+    --ok:#57C08A; --ok-soft:#152A22;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#0F1116; --surface:#161922; --surface-2:#1D212B; --surface-3:#252A36;
+  --line:#2B3040; --line-strong:#3D4455;
+  --ink:#E7E9F0; --ink-2:#A0A6B6; --ink-3:#70768A;
+  --accent:#8E99F2; --accent-soft:#212740; --accent-line:#3C4573;
+  --crit:#F08078; --crit-soft:#2E1B1A;
+  --warn:#D9A441; --warn-soft:#2B2417;
+  --ok:#57C08A; --ok-soft:#152A22;
+}
+:root[data-theme="light"]{
+  --paper:#FAFAFB; --surface:#FFFFFF; --surface-2:#F1F2F6; --surface-3:#E7E9F0;
+  --line:#DEE1E9; --line-strong:#C3C8D6;
+  --ink:#171922; --ink-2:#565A6B; --ink-3:#8B90A0;
+  --accent:#2E3C8F; --accent-soft:#E8EAF6; --accent-line:#B6BEE4;
+  --crit:#A32118; --crit-soft:#FBEAE8;
+  --warn:#8A5A08; --warn-soft:#FAF1DF;
+  --ok:#1D6444; --ok-soft:#E5F2EB;
+}
+
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);
+  font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
+h1,h2,h3,h4{margin:0;text-wrap:balance;font-weight:620;letter-spacing:-0.011em}
+p{margin:0}
+button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
+a{color:var(--accent)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:2px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+
+/* ---------- masthead ---------- */
+.masthead{position:sticky;top:0;z-index:40;background:var(--surface);
+  border-bottom:1px solid var(--line);display:flex;align-items:center;
+  gap:20px;padding:10px 20px;flex-wrap:wrap}
+.mast-id{display:flex;align-items:baseline;gap:10px}
+.mast-id strong{font-size:14px;letter-spacing:-0.02em}
+.mast-id span{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);
+  text-transform:uppercase;letter-spacing:.1em}
+.mast-tools{margin-left:auto;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.legend{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.tool-btn{font-family:var(--mono);font-size:10.5px;text-transform:uppercase;
+  letter-spacing:.08em;padding:5px 10px;border:1px solid var(--line-strong);
+  border-radius:3px;color:var(--ink-2);transition:background .12s,color .12s}
+.tool-btn:hover{background:var(--surface-2);color:var(--ink)}
+.tool-btn[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#fff}
+:root[data-theme="dark"] .tool-btn[aria-pressed="true"],
+.tool-btn[aria-pressed="true"]{color:var(--paper)}
+
+/* ---------- shell ---------- */
+.shell{display:grid;grid-template-columns:var(--rail) minmax(0,1fr);
+  align-items:start;min-height:calc(100vh - 49px)}
+.rail{position:sticky;top:49px;align-self:start;border-right:1px solid var(--line);
+  background:var(--surface);padding:16px 0 40px;height:calc(100vh - 49px);overflow-y:auto}
+.rail-tenant{padding:0 14px 14px;margin-bottom:6px;border-bottom:1px solid var(--line)}
+.rail-tenant .lbl{font-family:var(--mono);font-size:9.5px;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--ink-3);display:block;margin-bottom:4px}
+.rail-tenant .val{display:flex;align-items:center;justify-content:space-between;
+  gap:6px;font-size:12.5px;font-weight:600;padding:6px 8px;background:var(--surface-2);
+  border:1px solid var(--line);border-radius:3px}
+.rail-tenant .val i{font-style:normal;color:var(--ink-3);font-size:10px}
+.rail-group{padding:14px 14px 4px;font-family:var(--mono);font-size:9.5px;
+  letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3)}
+.rail-link{display:flex;align-items:center;gap:8px;width:100%;text-align:left;
+  padding:7px 14px;font-size:13px;color:var(--ink-2);border-left:2px solid transparent;
+  transition:background .12s,color .12s}
+.rail-link:hover{background:var(--surface-2);color:var(--ink)}
+.rail-link.is-active{background:var(--accent-soft);color:var(--accent);
+  border-left-color:var(--accent);font-weight:600}
+.rail-link .ct{margin-left:auto;font-family:var(--mono);font-size:10.5px;
+  padding:1px 5px;border-radius:9px;background:var(--surface-3);color:var(--ink-2)}
+.rail-link .ct.crit{background:var(--crit-soft);color:var(--crit)}
+
+/* ---------- canvas + notes ---------- */
+.canvas{padding:24px 26px 90px;display:grid;gap:24px;
+  grid-template-columns:minmax(0,1fr) var(--note-col)}
+body.notes-off .canvas{grid-template-columns:minmax(0,1fr)}
+body.notes-off .notes{display:none}
+.work{min-width:0;display:flex;flex-direction:column;gap:18px}
+.notes{display:flex;flex-direction:column;gap:12px;position:sticky;top:73px}
+.notes-hd{font-family:var(--mono);font-size:9.5px;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--ink-3);padding-bottom:6px;
+  border-bottom:1px solid var(--line)}
+.note{border-left:2px dashed var(--line-strong);padding:2px 0 2px 12px;
+  display:flex;flex-direction:column;gap:5px}
+.note p{font-size:12px;color:var(--ink-2);line-height:1.5}
+.note .nt{font-size:12px;font-weight:640;color:var(--ink);line-height:1.35}
+.note code{font-family:var(--mono);font-size:11px;background:var(--surface-2);
+  padding:1px 4px;border-radius:2px;color:var(--ink-2);word-break:break-all}
+
+.chip{display:inline-block;font-family:var(--mono);font-size:9.5px;font-weight:600;
+  letter-spacing:.1em;text-transform:uppercase;padding:2px 6px;border-radius:2px;
+  border:1px solid currentColor;background:transparent;align-self:flex-start}
+.chip.new{color:var(--accent)} .chip.chg{color:var(--warn)}
+.chip.ex{color:var(--ok)} .chip.open{color:var(--crit)}
+
+/* ---------- screen head ---------- */
+.screen{display:none}
+.screen.is-active{display:block}
+.shd{display:flex;flex-direction:column;gap:5px;padding-bottom:14px;
+  border-bottom:1px solid var(--line)}
+.shd .eyebrow{font-family:var(--mono);font-size:10px;letter-spacing:.11em;
+  text-transform:uppercase;color:var(--ink-3)}
+.shd h1{font-size:21px}
+.shd .sub{font-size:13px;color:var(--ink-2);max-width:64ch}
+
+/* ---------- primitives ---------- */
+.card{background:var(--surface);border:1px solid var(--line);border-radius:4px}
+.card-hd{display:flex;align-items:center;gap:10px;padding:10px 14px;
+  border-bottom:1px solid var(--line);flex-wrap:wrap}
+.card-hd h2{font-size:13px}
+.card-hd h3{font-size:12.5px}
+.card-hd .r{margin-left:auto;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.card-bd{padding:14px}
+.grid{display:grid;gap:14px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+
+.btn{font-size:12.5px;padding:6px 11px;border:1px solid var(--line-strong);
+  border-radius:3px;color:var(--ink-2);background:var(--surface);transition:background .12s}
+.btn:hover{background:var(--surface-2);color:var(--ink)}
+.btn.pri{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+:root[data-theme="dark"] .btn.pri{color:var(--paper)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .btn.pri{color:var(--paper)}}
+.btn.pri:hover{filter:brightness(1.12)}
+.btn.sm{font-size:11.5px;padding:4px 8px}
+
+.pill{display:inline-flex;align-items:center;gap:4px;font-family:var(--mono);
+  font-size:10.5px;font-weight:600;letter-spacing:.03em;padding:2px 7px;
+  border-radius:3px;background:var(--surface-3);color:var(--ink-2);white-space:nowrap}
+.pill.crit{background:var(--crit-soft);color:var(--crit)}
+.pill.warn{background:var(--warn-soft);color:var(--warn)}
+.pill.ok{background:var(--ok-soft);color:var(--ok)}
+.pill.acc{background:var(--accent-soft);color:var(--accent)}
+
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.lbl{font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--ink-3);display:block}
+.muted{color:var(--ink-3)}
+.ph{background:repeating-linear-gradient(-45deg,var(--surface-2),var(--surface-2) 5px,
+  var(--surface-3) 5px,var(--surface-3) 10px);border:1px dashed var(--line-strong);
+  border-radius:3px;display:flex;align-items:center;justify-content:center;
+  font-family:var(--mono);font-size:10.5px;color:var(--ink-3);text-align:center;padding:8px}
+
+/* tiles */
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:10px}
+.tile{background:var(--surface);border:1px solid var(--line);border-radius:4px;
+  padding:11px 12px;display:flex;flex-direction:column;gap:3px;text-align:left;
+  width:100%;transition:border-color .12s,background .12s}
+.tile:hover{border-color:var(--accent-line);background:var(--accent-soft)}
+.tile .n{font-family:var(--mono);font-size:22px;font-weight:600;
+  font-variant-numeric:tabular-nums;letter-spacing:-0.02em}
+.tile .k{font-size:11.5px;color:var(--ink-2);line-height:1.3}
+.tile .d{font-family:var(--mono);font-size:10px;color:var(--ink-3)}
+.tile.crit .n{color:var(--crit)} .tile.warn .n{color:var(--warn)} .tile.ok .n{color:var(--ok)}
+
+/* tables */
+.tw{overflow-x:auto;border-radius:0 0 4px 4px}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th{font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--ink-3);text-align:left;font-weight:500;padding:8px 12px;
+  border-bottom:1px solid var(--line);white-space:nowrap;background:var(--surface-2)}
+td{padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+tbody tr:last-child td{border-bottom:none}
+tbody tr:hover{background:var(--surface-2)}
+td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+.t-title{color:var(--ink);font-weight:520;display:block;max-width:46ch}
+.t-sub{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);margin-top:2px;display:block}
+
+/* filter bar */
+.filters{display:flex;gap:6px;flex-wrap:wrap;padding:10px 14px;
+  border-bottom:1px solid var(--line);background:var(--surface-2)}
+.fx{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;
+  padding:4px 9px;border:1px solid var(--line-strong);border-radius:3px;
+  background:var(--surface);color:var(--ink-2)}
+.fx b{font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--ink-3);font-weight:500}
+.fx::after{content:"▾";font-size:9px;color:var(--ink-3)}
+.fx.on{border-color:var(--accent-line);background:var(--accent-soft);color:var(--accent)}
+.fx.on b{color:var(--accent)}
+
+/* folder sub-rail */
+.split{display:grid;grid-template-columns:186px minmax(0,1fr);gap:0;
+  border:1px solid var(--line);border-radius:4px;background:var(--surface);overflow:hidden}
+.folders{border-right:1px solid var(--line);background:var(--surface-2);padding:8px 0}
+.folder{display:flex;align-items:center;gap:7px;width:100%;text-align:left;
+  padding:6px 12px;font-size:12.5px;color:var(--ink-2);border-left:2px solid transparent}
+.folder:hover{background:var(--surface-3);color:var(--ink)}
+.folder.is-active{background:var(--surface);color:var(--accent);font-weight:600;
+  border-left-color:var(--accent)}
+.folder .ct{margin-left:auto;font-family:var(--mono);font-size:10.5px;color:var(--ink-3)}
+.folder.is-active .ct{color:var(--accent)}
+
+/* field grid */
+.fields{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px 16px}
+.field{display:flex;flex-direction:column;gap:3px;min-width:0}
+.field .v{font-size:12.5px;color:var(--ink);word-break:break-word}
+.field .v.mono{font-size:12px}
+.field .v.miss{color:var(--crit);font-family:var(--mono);font-size:11.5px}
+.field .src{font-family:var(--mono);font-size:9.5px;color:var(--ink-3)}
+
+.input{border:1px solid var(--line-strong);border-radius:3px;background:var(--surface);
+  padding:6px 9px;font-size:12.5px;color:var(--ink-2);width:100%}
+.check{display:flex;align-items:center;gap:7px;font-size:12.5px;padding:5px 0}
+.box{width:14px;height:14px;border:1.5px solid var(--line-strong);border-radius:2px;
+  flex:none;display:grid;place-items:center;font-size:10px;color:var(--surface)}
+.box.on{background:var(--accent);border-color:var(--accent);color:#fff}
+:root[data-theme="dark"] .box.on{color:var(--paper)}
+
+/* two-col detail */
+.detail{display:grid;grid-template-columns:minmax(0,1.65fr) minmax(0,1fr);gap:14px;align-items:start}
+@media (max-width:1400px){.detail{grid-template-columns:minmax(0,1fr)}}
+
+/* bar viz */
+.bars{display:flex;flex-direction:column;gap:8px}
+.bar{display:grid;grid-template-columns:130px minmax(0,1fr) 44px;gap:10px;align-items:center;font-size:12px}
+.bar .track{height:7px;background:var(--surface-3);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;background:var(--accent);border-radius:4px}
+.bar .fill.warn{background:var(--warn)} .bar .fill.crit{background:var(--crit)}
+.bar .n{font-family:var(--mono);font-size:11.5px;text-align:right;
+  font-variant-numeric:tabular-nums;color:var(--ink-2)}
+
+/* timeline */
+.tl{display:flex;flex-direction:column;gap:0}
+.tl-i{display:grid;grid-template-columns:140px minmax(0,1fr);gap:12px;
+  padding:9px 0;border-bottom:1px solid var(--line)}
+.tl-i:last-child{border-bottom:none}
+.tl-i .when{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);
+  font-variant-numeric:tabular-nums}
+.tl-i .what{font-size:12.5px;color:var(--ink-2)}
+.tl-i .what b{color:var(--ink);font-weight:600}
+
+/* alerts */
+.alert-i{display:grid;grid-template-columns:8px minmax(0,1fr) auto;gap:12px;
+  padding:12px 14px;border-bottom:1px solid var(--line);align-items:start}
+.alert-i:last-child{border-bottom:none}
+.alert-i .sev{width:4px;border-radius:2px;align-self:stretch;background:var(--line-strong)}
+.alert-i.crit .sev{background:var(--crit)} .alert-i.warn .sev{background:var(--warn)}
+.alert-i.info .sev{background:var(--accent)}
+.alert-i.unread{background:var(--accent-soft)}
+.alert-i h4{font-size:13px;margin-bottom:2px}
+.alert-i p{font-size:12px;color:var(--ink-2)}
+.alert-i .meta{font-family:var(--mono);font-size:10px;color:var(--ink-3);margin-top:5px}
+
+.banner{display:flex;gap:10px;align-items:flex-start;padding:10px 13px;border-radius:4px;
+  border:1px solid var(--line);background:var(--surface-2);font-size:12.5px;color:var(--ink-2)}
+.banner.crit{background:var(--crit-soft);border-color:var(--crit);color:var(--crit)}
+.banner.warn{background:var(--warn-soft);border-color:var(--warn);color:var(--warn)}
+.banner b{display:block;color:inherit;font-weight:650;margin-bottom:2px}
+
+.steps{display:flex;gap:0;flex-wrap:wrap;border:1px solid var(--line);
+  border-radius:4px;overflow:hidden;background:var(--surface)}
+.step{flex:1;min-width:130px;padding:10px 12px;border-right:1px solid var(--line);
+  display:flex;flex-direction:column;gap:3px}
+.step:last-child{border-right:none}
+.step .sn{font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;color:var(--ink-3)}
+.step .st{font-size:12.5px;font-weight:600}
+.step.done .st{color:var(--ok)} .step.now{background:var(--accent-soft)}
+.step.now .st{color:var(--accent)} .step.todo .st{color:var(--ink-3)}
+
+@media (max-width:1180px){
+  .canvas{grid-template-columns:minmax(0,1fr)}
+  .notes{position:static;border-top:1px solid var(--line);padding-top:16px}
+}
+@media (max-width:820px){
+  .shell{grid-template-columns:1fr}
+  .rail{position:static;height:auto;border-right:none;border-bottom:1px solid var(--line)}
+  .split{grid-template-columns:1fr}
+  .folders{border-right:none;border-bottom:1px solid var(--line)}
+}
+</style>
+
+<div class="masthead">
+  <div class="mast-id">
+    <strong>LitMon-PV</strong>
+    <span>MVP Wireframe · rev 06 Aug 2026</span>
+  </div>
+  <div class="mast-tools">
+    <div class="legend">
+      <span class="chip ex">Exists</span>
+      <span class="chip chg">Changed</span>
+      <span class="chip new">New</span>
+      <span class="chip open">Open</span>
+    </div>
+    <button class="tool-btn" id="notesToggle" aria-pressed="true">Annotations</button>
+    <button class="tool-btn" id="themeToggle">Theme</button>
+  </div>
+</div>
+
+<div class="shell">
+  <nav class="rail">
+    <div class="rail-tenant">
+      <span class="lbl">Client</span>
+      <div class="val"><span>NorthBay Pharma</span><i>pilot</i></div>
+    </div>
+    <div class="rail-group">Monitor</div>
+    <button class="rail-link is-active" data-go="dash">Dashboard</button>
+    <button class="rail-link" data-go="workspace">My workspace <span class="ct crit">37</span></button>
+    <button class="rail-link" data-go="report">Detection report</button>
+    <button class="rail-link" data-go="alerts">Alerts <span class="ct crit">6</span></button>
+    <div class="rail-group">Regulatory</div>
+    <button class="rail-link" data-go="reg">Submission &amp; storage</button>
+    <button class="rail-link" data-go="audit">Audit trail</button>
+    <div class="rail-group">Configure</div>
+    <button class="rail-link" data-go="products">Products</button>
+    <button class="rail-link" data-go="sources">Literature sources</button>
+    <button class="rail-link" data-go="schedule">Search &amp; schedule</button>
+  </nav>
+
+  <div class="canvas">
+    <div class="work">
+
+      <!-- ============ 1 · DASHBOARD ============ -->
+      <section class="screen is-active" data-screen="dash">
+        <div class="shd">
+          <span class="eyebrow">Step 12 · User dashboard</span>
+          <h1>Dashboard</h1>
+          <p class="sub">Operational view for the assigned PV user. Every tile is a link into the
+            filtered work queue behind it — no metric is a dead end.</p>
+        </div>
+
+        <div class="grid" style="margin-top:18px">
+          <div class="banner crit">
+            <div><b>2 scheduled searches did not complete</b>
+              Atorvastatin (weekly, due 04 Aug) and Levetiracetam (weekly, due 05 Aug) returned an
+              E-utilities error. No literature has been screened for these products in 9 days.</div>
+          </div>
+
+          <div>
+            <span class="lbl" style="margin-bottom:8px">Detection funnel · last 30 days</span>
+            <div class="tiles">
+              <button class="tile"><span class="n">1,284</span><span class="k">Articles identified</span><span class="d">4 products</span></button>
+              <button class="tile"><span class="n">1,247</span><span class="k">Articles screened</span><span class="d">97% of identified</span></button>
+              <button class="tile ok"><span class="n">89</span><span class="k">Relevant</span><span class="d">7.1% pass rate</span></button>
+              <button class="tile"><span class="n">1,158</span><span class="k">Irrelevant</span><span class="d">auto-cleared</span></button>
+              <button class="tile crit"><span class="n">14</span><span class="k">Potential signals</span><span class="d">3 unreviewed</span></button>
+              <button class="tile warn"><span class="n">37</span><span class="k">Invalid / failed</span><span class="d">needs exception review</span></button>
+            </div>
+          </div>
+
+          <div>
+            <span class="lbl" style="margin-bottom:8px">Review &amp; disposition</span>
+            <div class="tiles">
+              <button class="tile warn"><span class="n">23</span><span class="k">Awaiting review</span><span class="d">oldest: 6 days</span></button>
+              <button class="tile crit"><span class="n">5</span><span class="k">Overdue reviews</span><span class="d">past SLA</span></button>
+              <button class="tile"><span class="n">11</span><span class="k">Approved for submission</span><span class="d">4 not yet generated</span></button>
+              <button class="tile"><span class="n">42</span><span class="k">Retained, not submitted</span><span class="d">stored internally</span></button>
+              <button class="tile ok"><span class="n">7</span><span class="k">Submitted</span><span class="d">refs recorded</span></button>
+              <button class="tile"><span class="n">6</span><span class="k">Open alerts</span><span class="d">2 high priority</span></button>
+            </div>
+          </div>
+
+          <div class="detail">
+            <div class="card">
+              <div class="card-hd"><h2>Results by product</h2>
+                <div class="r"><span class="pill">30 days</span></div></div>
+              <div class="card-bd">
+                <div class="bars">
+                  <div class="bar"><span>Metformin HCl</span><span class="track"><span class="fill" style="width:78%"></span></span><span class="n">412</span></div>
+                  <div class="bar"><span>Atorvastatin</span><span class="track"><span class="fill" style="width:64%"></span></span><span class="n">338</span></div>
+                  <div class="bar"><span>Amoxicillin/clav.</span><span class="track"><span class="fill" style="width:55%"></span></span><span class="n">291</span></div>
+                  <div class="bar"><span>Levetiracetam</span><span class="track"><span class="fill" style="width:46%"></span></span><span class="n">243</span></div>
+                </div>
+                <div style="height:1px;background:var(--line);margin:14px 0"></div>
+                <span class="lbl" style="margin-bottom:8px">By literature source</span>
+                <div class="bars">
+                  <div class="bar"><span>PubMed</span><span class="track"><span class="fill" style="width:96%"></span></span><span class="n">1,231</span></div>
+                  <div class="bar"><span>PMC open access</span><span class="track"><span class="fill" style="width:8%"></span></span><span class="n">53</span></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-hd"><h2>Search completion</h2></div>
+              <div class="tw">
+                <table>
+                  <thead><tr><th>Product</th><th>Freq</th><th>Last run</th><th>State</th></tr></thead>
+                  <tbody>
+                    <tr><td>Metformin HCl</td><td class="num">Weekly</td><td class="num">05 Aug</td><td><span class="pill ok">OK</span></td></tr>
+                    <tr><td>Atorvastatin</td><td class="num">Weekly</td><td class="num">28 Jul</td><td><span class="pill crit">Failed</span></td></tr>
+                    <tr><td>Amoxicillin/clav.</td><td class="num">Weekly</td><td class="num">05 Aug</td><td><span class="pill ok">OK</span></td></tr>
+                    <tr><td>Levetiracetam</td><td class="num">Weekly</td><td class="num">28 Jul</td><td><span class="pill crit">Failed</span></td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ 2 · WORKSPACE ============ -->
+      <section class="screen" data-screen="workspace">
+        <div class="shd">
+          <span class="eyebrow">Step 9 · User folder and work queue</span>
+          <h1>My workspace</h1>
+          <p class="sub">Folders are workflow states, not severity buckets. This replaces the
+            spreadsheets, email folders and local files the PV user maintains by hand today.</p>
+        </div>
+
+        <div class="grid" style="margin-top:18px">
+          <div class="split">
+            <div class="folders">
+              <button class="folder is-active">New alerts <span class="ct">6</span></button>
+              <button class="folder">Awaiting review <span class="ct">23</span></button>
+              <button class="folder">Potential signals <span class="ct">14</span></button>
+              <button class="folder">Under assessment <span class="ct">8</span></button>
+              <button class="folder">Invalid / failed <span class="ct">37</span></button>
+              <button class="folder">Approved for submission <span class="ct">11</span></button>
+              <button class="folder">Not for submission <span class="ct">42</span></button>
+              <button class="folder">Submitted <span class="ct">7</span></button>
+              <button class="folder">Archived <span class="ct">1.1k</span></button>
+            </div>
+            <div>
+              <div class="filters">
+                <span class="fx on"><b>Product</b> Metformin</span>
+                <span class="fx"><b>Ingredient / API</b> Any</span>
+                <span class="fx"><b>Date</b> Last 30d</span>
+                <span class="fx"><b>Source</b> Any</span>
+                <span class="fx"><b>Classification</b> Any</span>
+                <span class="fx on"><b>Signal status</b> Potential</span>
+                <span class="fx"><b>Submission</b> Any</span>
+                <span class="fx"><b>Assigned</b> Me</span>
+                <span class="fx"><b>Priority</b> Any</span>
+                <span class="fx"><b>Review status</b> Open</span>
+              </div>
+              <div class="tw">
+                <table>
+                  <thead><tr><th>Pri</th><th>Article</th><th>Classification</th><th>Signal</th>
+                    <th>Conf.</th><th>Due</th><th>Assigned</th></tr></thead>
+                  <tbody>
+                    <tr>
+                      <td><span class="pill crit">P1</span></td>
+                      <td><span class="t-title">Fatal metformin-associated lactic acidosis in a patient with acute kidney injury: a case report</span>
+                        <span class="t-sub">PMID 38914207 · Metformin HCl · PubMed</span></td>
+                      <td><span class="pill crit">Potential safety signal</span></td>
+                      <td><span class="pill warn">Potential</span></td>
+                      <td class="num">0.94</td>
+                      <td class="num" style="color:var(--crit)">−1d 4h</td>
+                      <td class="num">R. Menon</td>
+                    </tr>
+                    <tr>
+                      <td><span class="pill crit">P1</span></td>
+                      <td><span class="t-title">Severe hypoglycaemia following concomitant metformin and glibenclamide therapy in elderly patients</span>
+                        <span class="t-sub">PMID 38877310 · Metformin HCl · PubMed</span></td>
+                      <td><span class="pill warn">Drug interaction</span></td>
+                      <td><span class="pill warn">Potential</span></td>
+                      <td class="num">0.88</td>
+                      <td class="num" style="color:var(--warn)">18h</td>
+                      <td class="num">R. Menon</td>
+                    </tr>
+                    <tr>
+                      <td><span class="pill warn">P2</span></td>
+                      <td><span class="t-title">Metformin use during pregnancy and neonatal outcomes: a retrospective cohort</span>
+                        <span class="t-sub">PMID 38845192 · Metformin HCl · PubMed</span></td>
+                      <td><span class="pill">Special situation</span></td>
+                      <td><span class="pill">Under review</span></td>
+                      <td class="num">0.71</td>
+                      <td class="num">3d</td>
+                      <td class="num">R. Menon</td>
+                    </tr>
+                    <tr>
+                      <td><span class="pill warn">P2</span></td>
+                      <td><span class="t-title">Dissolution failure in three batches of immediate-release metformin tablets sourced from retail pharmacies</span>
+                        <span class="t-sub">PMID 38801744 · Metformin HCl · PubMed</span></td>
+                      <td><span class="pill warn">Product quality</span></td>
+                      <td><span class="pill">—</span></td>
+                      <td class="num">0.69</td>
+                      <td class="num">4d</td>
+                      <td class="num">R. Menon</td>
+                    </tr>
+                    <tr>
+                      <td><span class="pill">P3</span></td>
+                      <td><span class="t-title">Full text not retrievable — abstract indicates hepatic injury with unnamed biguanide</span>
+                        <span class="t-sub">PMID 38799021 · Metformin HCl · exception</span></td>
+                      <td><span class="pill crit">Insufficient information</span></td>
+                      <td><span class="pill">—</span></td>
+                      <td class="num muted">—</td>
+                      <td class="num">5d</td>
+                      <td class="num">R. Menon</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ 3 · DETECTION REPORT ============ -->
+      <section class="screen" data-screen="report">
+        <div class="shd">
+          <span class="eyebrow">Steps 5, 6, 10 &amp; 11 · Extraction, tagging, review, detection report</span>
+          <h1>Detection report</h1>
+          <p class="sub">One standing document per potentially relevant article. The AI proposes;
+            the reviewer confirms or overrides. Nothing becomes a confirmed signal without a
+            recorded human assessment.</p>
+        </div>
+
+        <div class="grid" style="margin-top:18px">
+          <div class="steps">
+            <div class="step done"><span class="sn">01</span><span class="st">Detected</span><span class="d mono muted" style="font-size:10px">05 Aug 04:12</span></div>
+            <div class="step done"><span class="sn">02</span><span class="st">Extracted</span><span class="d mono muted" style="font-size:10px">05 Aug 04:13</span></div>
+            <div class="step done"><span class="sn">03</span><span class="st">Classified</span><span class="d mono muted" style="font-size:10px">05 Aug 04:13</span></div>
+            <div class="step now"><span class="sn">04</span><span class="st">Human review</span><span class="d mono muted" style="font-size:10px">open · overdue</span></div>
+            <div class="step todo"><span class="sn">05</span><span class="st">Disposition</span><span class="d mono muted" style="font-size:10px">—</span></div>
+            <div class="step todo"><span class="sn">06</span><span class="st">Submit or store</span><span class="d mono muted" style="font-size:10px">—</span></div>
+          </div>
+
+          <div class="banner warn">
+            <div><b>Review overdue by 1 day 4 hours</b>
+              P1 items carry a 72-hour review SLA. The assigned reviewer and the PV lead were
+              alerted on 05 Aug and 06 Aug.</div>
+          </div>
+
+          <div class="detail">
+            <div class="grid">
+              <div class="card">
+                <div class="card-hd"><h2>Article</h2>
+                  <div class="r"><span class="pill acc">PubMed</span><span class="pill mono">PMID 38914207</span></div></div>
+                <div class="card-bd grid">
+                  <div>
+                    <h3 style="font-size:15px;line-height:1.35;margin-bottom:6px">Fatal metformin-associated
+                      lactic acidosis in a patient with acute kidney injury: a case report</h3>
+                    <p class="mono muted" style="font-size:11.5px">Krishnan S, Patel A, Rao V ·
+                      Indian Journal of Clinical Pharmacology · 12 Jul 2026 · doi:10.0000/ijcp.2026.0417</p>
+                  </div>
+                  <div class="ph" style="min-height:64px">Abstract excerpt · matched terms highlighted inline</div>
+                </div>
+              </div>
+
+              <div class="card">
+                <div class="card-hd"><h2>Extracted safety information</h2>
+                  <div class="r"><span class="pill">18 fields</span><span class="pill crit">2 missing</span>
+                    <button class="btn sm">Edit</button></div></div>
+                <div class="card-bd">
+                  <div class="fields">
+                    <div class="field"><span class="lbl">Product</span><span class="v">Metformin HCl (Glucomet)</span><span class="src">extracted · 0.99</span></div>
+                    <div class="field"><span class="lbl">Active ingredient / API</span><span class="v">Metformin hydrochloride</span><span class="src">extracted · 0.99</span></div>
+                    <div class="field"><span class="lbl">Suspected adverse event</span><span class="v">Lactic acidosis; acute kidney injury</span><span class="src">extracted · 0.96</span></div>
+                    <div class="field"><span class="lbl">Seriousness</span><span class="v" style="color:var(--crit);font-weight:600">Fatal</span><span class="src">extracted · 0.98</span></div>
+                    <div class="field"><span class="lbl">Outcome</span><span class="v">Death</span><span class="src">extracted · 0.98</span></div>
+                    <div class="field"><span class="lbl">Patient</span><span class="v">Female, 68 years</span><span class="src">extracted · 0.91</span></div>
+                    <div class="field"><span class="lbl">Indication</span><span class="v">Type 2 diabetes mellitus</span><span class="src">extracted · 0.94</span></div>
+                    <div class="field"><span class="lbl">Dosage</span><span class="v">1000 mg twice daily, oral</span><span class="src">extracted · 0.87</span></div>
+                    <div class="field"><span class="lbl">Country of occurrence</span><span class="v">India</span><span class="src">extracted · 0.93</span></div>
+                    <div class="field"><span class="lbl">Reporter / source type</span><span class="v">Published case report</span><span class="src">extracted · 0.99</span></div>
+                    <div class="field"><span class="lbl">Identifiable reporter</span><span class="v miss">Not stated — confirm</span><span class="src">reviewer input needed</span></div>
+                    <div class="field"><span class="lbl">Concomitant medication</span><span class="v miss">Not stated — confirm</span><span class="src">reviewer input needed</span></div>
+                  </div>
+                  <div style="height:1px;background:var(--line);margin:14px 0"></div>
+                  <span class="lbl" style="margin-bottom:6px">Why this was classified relevant</span>
+                  <p style="font-size:12.5px;color:var(--ink-2);max-width:70ch">Identifiable patient,
+                    named suspect product, defined adverse event and a fatal outcome are all present —
+                    the four ICSR validity elements are met. Reported in a monitored market. The
+                    reaction is labelled but the fatal outcome is not, which is what drives the
+                    signal flag rather than routine case handling.</p>
+                  <div class="row" style="margin-top:10px">
+                    <span class="pill">identifiable-patient</span><span class="pill">suspect-drug-named</span>
+                    <span class="pill">event-defined</span><span class="pill crit">fatal-outcome</span>
+                    <span class="pill warn">unlabelled-outcome</span><span class="pill">monitored-market</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="card">
+                <div class="card-hd"><h2>Audit history</h2></div>
+                <div class="card-bd">
+                  <div class="tl">
+                    <div class="tl-i"><span class="when">05 Aug 04:12</span><span class="what"><b>system</b> — detected in scheduled run <span class="mono">#4417</span>, query v3</span></div>
+                    <div class="tl-i"><span class="when">05 Aug 04:13</span><span class="what"><b>system</b> — extracted 18 fields, model <span class="mono">claude-opus-5</span>, prompt v2.1</span></div>
+                    <div class="tl-i"><span class="when">05 Aug 04:13</span><span class="what"><b>system</b> — classified <i>potential safety signal</i>, confidence 0.94, ruleset v7</span></div>
+                    <div class="tl-i"><span class="when">05 Aug 04:14</span><span class="what"><b>system</b> — alerted <b>R. Menon</b> via in-app and email, priority P1</span></div>
+                    <div class="tl-i"><span class="when">06 Aug 09:00</span><span class="what"><b>system</b> — SLA breach, escalated to PV lead</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="grid">
+              <div class="card">
+                <div class="card-hd"><h3>Classification</h3><div class="r"><span class="pill acc">AI proposed</span></div></div>
+                <div class="card-bd">
+                  <div class="check"><span class="box on">✓</span> Potential safety signal</div>
+                  <div class="check"><span class="box"></span> Potentially relevant</div>
+                  <div class="check"><span class="box"></span> Adverse-event related</div>
+                  <div class="check"><span class="box"></span> Product quality</div>
+                  <div class="check"><span class="box"></span> Duplicate</div>
+                  <div class="check"><span class="box"></span> Irrelevant</div>
+                  <div class="check"><span class="box"></span> Invalid</div>
+                  <div class="check"><span class="box"></span> Insufficient information</div>
+                  <div class="check"><span class="box"></span> Requires human review</div>
+                </div>
+              </div>
+
+              <div class="card">
+                <div class="card-hd"><h3>Signal tags</h3></div>
+                <div class="card-bd">
+                  <div class="row">
+                    <span class="pill warn">Potential signal ✓</span>
+                    <span class="pill">Confirmed signal</span>
+                    <span class="pill">Under review</span>
+                    <span class="pill crit">Serious AE ✓</span>
+                    <span class="pill">Adverse event</span>
+                    <span class="pill">Product quality</span>
+                    <span class="pill">Lack of efficacy</span>
+                    <span class="pill">Drug interaction</span>
+                    <span class="pill">Special situation</span>
+                    <span class="pill">Duplicate</span>
+                    <span class="pill">Invalid</span>
+                    <span class="pill">Not relevant</span>
+                    <span class="pill">Submission required</span>
+                    <span class="pill">Submission not required</span>
+                  </div>
+                  <p class="muted" style="font-size:11.5px;margin-top:10px">Confirmed signal can only
+                    be set by a PV lead, and only after a review decision is recorded.</p>
+                </div>
+              </div>
+
+              <div class="card">
+                <div class="card-hd"><h3>Reviewer decision</h3></div>
+                <div class="card-bd grid" style="gap:10px">
+                  <div class="field"><span class="lbl">Decision</span>
+                    <span class="input">Mark as a potential signal ▾</span>
+                    <span class="src">9 options · incl. accept, request assessment, invalid,
+                      duplicate, not relevant, prepare for submission, retain internally, close</span></div>
+                  <div class="field"><span class="lbl">Comments</span>
+                    <span class="input" style="min-height:56px;display:block">Concur with AI. Fatal
+                      outcome is not labelled — raising for signal assessment.</span></div>
+                  <div class="field"><span class="lbl">Supporting documents</span>
+                    <div class="ph" style="min-height:38px">Drop files · full text, assessment notes</div></div>
+                  <div class="field"><span class="lbl">Reviewer</span>
+                    <span class="v mono">R. Menon · 06 Aug 2026 14:22 IST</span></div>
+                  <div class="row" style="margin-top:2px">
+                    <button class="btn pri">Record decision</button>
+                    <button class="btn">Reassign</button>
+                  </div>
+                  <p class="muted" style="font-size:11.5px">Previous and revised classification are
+                    both retained. The decision is appended to the audit trail, never overwritten.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ 4 · ALERTS ============ -->
+      <section class="screen" data-screen="alerts">
+        <div class="shd">
+          <span class="eyebrow">Steps 7 &amp; 8 · Automated alerts and notifications</span>
+          <h1>Alerts</h1>
+          <p class="sub">An inbox over the alert events the pipeline already raises. Today the only
+            trigger is an SLA breach and the only surface is a button on the Ops page; this widens
+            the triggers and gives them somewhere to land.</p>
+        </div>
+
+        <div class="grid" style="margin-top:18px">
+          <div class="row">
+            <span class="fx on"><b>Status</b> Unread</span>
+            <span class="fx"><b>Priority</b> Any</span>
+            <span class="fx"><b>Product</b> Any</span>
+            <span class="fx"><b>Type</b> Any</span>
+            <span style="margin-left:auto"></span>
+            <button class="btn sm">Mark all read</button>
+            <button class="btn sm">Notification settings</button>
+          </div>
+
+          <div class="card">
+            <div class="card-hd"><h2>Inbox</h2><div class="r"><span class="pill crit">2 high</span>
+              <span class="pill warn">3 medium</span><span class="pill">1 low</span></div></div>
+            <div>
+              <div class="alert-i crit unread">
+                <span class="sev"></span>
+                <div><h4>Potential safety signal detected — Metformin HCl</h4>
+                  <p>Fatal metformin-associated lactic acidosis. Confidence 0.94. Fatal outcome,
+                    all four ICSR elements present.</p>
+                  <p class="meta">P1 · 05 Aug 04:14 · in-app + email · PMID 38914207</p></div>
+                <button class="btn sm" data-go="report">Open</button>
+              </div>
+              <div class="alert-i crit unread">
+                <span class="sev"></span>
+                <div><h4>Review overdue — 5 articles past SLA</h4>
+                  <p>Oldest is 1 day 4 hours past a 72-hour P1 SLA. Escalated to the PV lead.</p>
+                  <p class="meta">P1 · 06 Aug 09:00 · in-app + email</p></div>
+                <button class="btn sm" data-go="workspace">Open</button>
+              </div>
+              <div class="alert-i warn unread">
+                <span class="sev"></span>
+                <div><h4>Scheduled search failed — Atorvastatin</h4>
+                  <p>NCBI E-utilities returned HTTP 429 after 3 retries. The weekly run for 28 Jul
+                    did not complete.</p>
+                  <p class="meta">P2 · 28 Jul 02:05 · in-app + email · run #4392</p></div>
+                <button class="btn sm" data-go="schedule">Open</button>
+              </div>
+              <div class="alert-i warn unread">
+                <span class="sev"></span>
+                <div><h4>No search completed in the expected period — Levetiracetam</h4>
+                  <p>Configured weekly. Last successful run was 28 Jul, 9 days ago.</p>
+                  <p class="meta">P2 · 06 Aug 02:00 · in-app + email</p></div>
+                <button class="btn sm" data-go="schedule">Open</button>
+              </div>
+              <div class="alert-i warn">
+                <span class="sev"></span>
+                <div><h4>Processing exception — 37 articles could not be completed</h4>
+                  <p>Grouped exception. Mixed causes: full text unavailable (22), extraction returned
+                    insufficient information (11), source parse error (4).</p>
+                  <p class="meta">P2 · 05 Aug 04:20 · in-app · exception queue</p></div>
+                <button class="btn sm" data-go="workspace">Open</button>
+              </div>
+              <div class="alert-i info">
+                <span class="sev"></span>
+                <div><h4>11 reports awaiting your review</h4>
+                  <p>Daily digest for NorthBay Pharma across 4 products.</p>
+                  <p class="meta">P3 · 06 Aug 08:00 · email digest</p></div>
+                <button class="btn sm" data-go="workspace">Open</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-hd"><h2>Channels</h2></div>
+            <div class="card-bd">
+              <div class="row">
+                <span class="pill ok">In-app · on</span>
+                <span class="pill ok">Email · on</span>
+                <span class="pill">SMS · later phase</span>
+                <span class="pill">Teams · later phase</span>
+                <span class="pill">Slack · later phase</span>
+                <span class="pill">WhatsApp · later phase</span>
+                <span class="pill">Push · later phase</span>
+              </div>
+              <p class="muted" style="font-size:11.5px;margin-top:10px">Email uses the SMTP path the
+                backend already has. The remaining channels are placeholders pending confirmation of
+                which are actually required for the pilot.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ 5 · REGULATORY ============ -->
+      <section class="screen" data-screen="reg">
+        <div class="shd">
+          <span class="eyebrow">Steps 13, 14 &amp; 15 · Regulatory output, submission or storage</span>
+          <h1>Submission &amp; storage</h1>
+          <p class="sub">The application never submits. It prepares and validates the file, the user
+            decides, downloads, uploads to the gateway themselves, and records the reference here.</p>
+        </div>
+
+        <div class="grid" style="margin-top:18px">
+          <div class="banner">
+            <div><b>Prototype output — not a validated CDSCO submission</b>
+              The XML schema, mandatory-field list and acceptance rules have not been supplied. The
+              structure below is a placeholder built from the fields the ICSR export package already
+              produces, and must be replaced once the official specification is confirmed.</div>
+          </div>
+
+          <div class="detail">
+            <div class="grid">
+              <div class="card">
+                <div class="card-hd"><h2>Mandatory-field validation</h2>
+                  <div class="r"><span class="pill crit">2 blocking</span><span class="pill warn">1 warning</span></div></div>
+                <div class="tw">
+                  <table>
+                    <thead><tr><th>Field</th><th>Value</th><th>State</th></tr></thead>
+                    <tbody>
+                      <tr><td>Patient identifier</td><td class="num">F / 68y</td><td><span class="pill ok">Present</span></td></tr>
+                      <tr><td>Suspect product</td><td class="num">Metformin HCl</td><td><span class="pill ok">Present</span></td></tr>
+                      <tr><td>Reaction term</td><td class="num">Lactic acidosis</td><td><span class="pill ok">Present</span></td></tr>
+                      <tr><td>Seriousness</td><td class="num">Fatal</td><td><span class="pill ok">Present</span></td></tr>
+                      <tr><td>Identifiable reporter</td><td class="num muted">—</td><td><span class="pill crit">Missing</span></td></tr>
+                      <tr><td>Date of onset</td><td class="num muted">—</td><td><span class="pill crit">Missing</span></td></tr>
+                      <tr><td>Concomitant medication</td><td class="num muted">—</td><td><span class="pill warn">Not stated</span></td></tr>
+                      <tr><td>MAH identifier</td><td class="num">NorthBay Pharma</td><td><span class="pill ok">Present</span></td></tr>
+                    </tbody>
+                  </table>
+                </div>
+                <div class="card-bd" style="border-top:1px solid var(--line)">
+                  <p class="muted" style="font-size:12px">Generation is blocked while a mandatory
+                    field is missing. The reviewer can supply the value, or record why it cannot be
+                    obtained from the publication.</p>
+                </div>
+              </div>
+
+              <div class="card">
+                <div class="card-hd"><h2>Generated versions</h2>
+                  <div class="r"><button class="btn sm">Regenerate</button></div></div>
+                <div class="tw">
+                  <table>
+                    <thead><tr><th>Ver</th><th>Format</th><th>Generated</th><th>By</th><th></th></tr></thead>
+                    <tbody>
+                      <tr><td class="num">v3</td><td>Human-readable PDF</td><td class="num">06 Aug 14:31</td><td class="num">R. Menon</td><td><button class="btn sm">Download</button></td></tr>
+                      <tr><td class="num">v3</td><td>XML (prototype)</td><td class="num">06 Aug 14:31</td><td class="num">R. Menon</td><td><button class="btn sm">Download</button></td></tr>
+                      <tr><td class="num">v2</td><td>ICSR package JSON</td><td class="num">05 Aug 16:02</td><td class="num">R. Menon</td><td><button class="btn sm">Download</button></td></tr>
+                      <tr><td class="num">v1</td><td>ICSR package CSV</td><td class="num">05 Aug 16:02</td><td class="num">R. Menon</td><td><button class="btn sm">Download</button></td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <div class="grid">
+              <div class="card">
+                <div class="card-hd"><h3>Decision</h3></div>
+                <div class="card-bd grid" style="gap:10px">
+                  <div class="check"><span class="box on">✓</span> Prepare for regulatory submission</div>
+                  <div class="check"><span class="box"></span> Retain internally, do not submit</div>
+                  <div class="field"><span class="lbl">Reason</span>
+                    <span class="input" style="min-height:48px;display:block">Fatal unlabelled outcome
+                      in a monitored market — reportable.</span></div>
+                  <button class="btn pri" style="align-self:flex-start">Record decision</button>
+                </div>
+              </div>
+
+              <div class="card">
+                <div class="card-hd"><h3>Gateway record</h3>
+                  <div class="r"><span class="pill">manual upload</span></div></div>
+                <div class="card-bd grid" style="gap:10px">
+                  <div class="field"><span class="lbl">Gateway</span>
+                    <span class="input">Not yet confirmed ▾</span>
+                    <span class="src">CDSCO portal / PvPI / internal safety system — pending</span></div>
+                  <div class="field"><span class="lbl">Submission reference</span>
+                    <span class="input">—</span></div>
+                  <div class="field"><span class="lbl">Submitted on</span>
+                    <span class="input">—</span></div>
+                  <div class="field"><span class="lbl">Acknowledgement</span>
+                    <div class="ph" style="min-height:38px">Attach receipt</div></div>
+                  <button class="btn" style="align-self:flex-start">Mark as submitted</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ 6 · AUDIT ============ -->
+      <section class="screen" data-screen="audit">
+        <div class="shd">
+          <span class="eyebrow">Inspection readiness</span>
+          <h1>Audit trail</h1>
+          <p class="sub">Append-only event log across searches, extraction, classification, alerts,
+            decisions and regulatory output.</p>
+        </div>
+
+        <div class="grid" style="margin-top:18px">
+          <div class="card">
+            <div class="filters">
+              <span class="fx"><b>Actor</b> Any</span>
+              <span class="fx"><b>Action</b> Any</span>
+              <span class="fx"><b>Entity</b> Any</span>
+              <span class="fx on"><b>Date</b> Last 7d</span>
+              <span style="margin-left:auto"></span>
+              <button class="btn sm">Export log</button>
+            </div>
+            <div class="tw">
+              <table>
+                <thead><tr><th>Timestamp</th><th>Actor</th><th>Action</th><th>Entity</th><th>Detail</th></tr></thead>
+                <tbody>
+                  <tr><td class="num">06 Aug 14:31:07</td><td class="num">r.menon</td><td><span class="pill">regulatory.generate</span></td><td class="num">article/8841</td><td>XML v3 + PDF v3 generated</td></tr>
+                  <tr><td class="num">06 Aug 14:22:51</td><td class="num">r.menon</td><td><span class="pill">review.decide</span></td><td class="num">article/8841</td><td>potential_signal · prev: requires_human_review</td></tr>
+                  <tr><td class="num">06 Aug 09:00:02</td><td class="num">system</td><td><span class="pill warn">alert.escalate</span></td><td class="num">article/8841</td><td>SLA breach → PV lead</td></tr>
+                  <tr><td class="num">06 Aug 02:00:00</td><td class="num">system</td><td><span class="pill warn">search.missed</span></td><td class="num">product/4</td><td>no run in expected period</td></tr>
+                  <tr><td class="num">05 Aug 04:14:33</td><td class="num">system</td><td><span class="pill">alert.raise</span></td><td class="num">article/8841</td><td>P1 · in-app + email → r.menon</td></tr>
+                  <tr><td class="num">05 Aug 04:13:19</td><td class="num">system</td><td><span class="pill">classify</span></td><td class="num">article/8841</td><td>potential_safety_signal 0.94 · ruleset v7</td></tr>
+                  <tr><td class="num">05 Aug 04:13:02</td><td class="num">system</td><td><span class="pill">extract</span></td><td class="num">article/8841</td><td>18 fields · claude-opus-5 · prompt v2.1</td></tr>
+                  <tr><td class="num">05 Aug 04:12:44</td><td class="num">system</td><td><span class="pill">search.run</span></td><td class="num">run/4417</td><td>412 hits · 37 new · query v3</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ 7 · PRODUCTS ============ -->
+      <section class="screen" data-screen="products">
+        <div class="shd">
+          <span class="eyebrow">Step 1 · Product configuration</span>
+          <h1>Products</h1>
+          <p class="sub">Four products for the pilot. Each carries its molecule identity, its
+            commercial identity, the markets it is sold in, how often it is monitored, and who is
+            responsible for reviewing what comes back.</p>
+        </div>
+
+        <div class="grid" style="margin-top:18px">
+          <div class="card">
+            <div class="card-hd"><h2>Monitored products</h2>
+              <div class="r"><span class="pill">4 of 4 configured</span><button class="btn sm pri">Add product</button></div></div>
+            <div class="tw">
+              <table>
+                <thead><tr><th>Brand</th><th>Generic</th><th>API</th><th>MAH</th><th>Markets</th><th>Freq</th><th>Reviewer</th><th></th></tr></thead>
+                <tbody>
+                  <tr><td>Glucomet</td><td>Metformin</td><td class="num">Metformin HCl</td><td>NorthBay Pharma</td><td class="num">IN, LK, NP</td><td class="num">Weekly</td><td class="num">R. Menon</td><td><span class="pill ok">Active</span></td></tr>
+                  <tr><td>Lipicor</td><td>Atorvastatin</td><td class="num">Atorvastatin calcium</td><td>NorthBay Pharma</td><td class="num">IN, BD</td><td class="num">Weekly</td><td class="num">R. Menon</td><td><span class="pill crit">Search failing</span></td></tr>
+                  <tr><td>Amoxiclan</td><td>Amoxicillin / clavulanate</td><td class="num">Amoxicillin trihydrate; potassium clavulanate</td><td>NorthBay Pharma</td><td class="num">IN</td><td class="num">Weekly</td><td class="num">R. Menon</td><td><span class="pill ok">Active</span></td></tr>
+                  <tr><td>Levracet</td><td>Levetiracetam</td><td class="num">Levetiracetam</td><td>NorthBay Pharma</td><td class="num">IN, LK</td><td class="num">Weekly</td><td class="num">R. Menon</td><td><span class="pill crit">Search failing</span></td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-hd"><h2>Glucomet — configuration</h2>
+              <div class="r"><span class="pill mono">product/1</span><button class="btn sm">Save</button></div></div>
+            <div class="card-bd grid" style="gap:16px">
+              <div class="fields">
+                <div class="field"><span class="lbl">Brand name</span><span class="input">Glucomet</span></div>
+                <div class="field"><span class="lbl">Generic name</span><span class="input">Metformin</span></div>
+                <div class="field"><span class="lbl">Active ingredient</span><span class="input">Metformin hydrochloride</span></div>
+                <div class="field"><span class="lbl">API</span><span class="input">Metformin HCl</span></div>
+                <div class="field"><span class="lbl">MAH / manufacturer</span><span class="input">NorthBay Pharma Ltd</span></div>
+                <div class="field"><span class="lbl">ATC code</span><span class="input">A10BA02</span></div>
+                <div class="field"><span class="lbl">Monitoring frequency</span><span class="input">Weekly ▾</span></div>
+                <div class="field"><span class="lbl">Responsible reviewer</span><span class="input">R. Menon ▾</span></div>
+              </div>
+              <div class="field"><span class="lbl">Markets / countries</span>
+                <div class="row" style="margin-top:4px">
+                  <span class="pill acc">India ×</span><span class="pill acc">Sri Lanka ×</span>
+                  <span class="pill acc">Nepal ×</span><span class="pill">+ add</span></div></div>
+              <div class="field"><span class="lbl">Synonyms and alternative molecule names</span>
+                <div class="row" style="margin-top:4px">
+                  <span class="pill">metformin ×</span><span class="pill">dimethylbiguanide ×</span>
+                  <span class="pill">metformin hydrochloride ×</span><span class="pill">glucophage ×</span>
+                  <span class="pill">1,1-dimethylbiguanide ×</span><span class="pill">+ add</span></div>
+                <span class="src" style="margin-top:5px">Feeds the generated search string. Changing
+                  this creates a new query version and requires PV lead approval.</span></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ 8 · SOURCES ============ -->
+      <section class="screen" data-screen="sources">
+        <div class="shd">
+          <span class="eyebrow">Step 2 · Literature source configuration</span>
+          <h1>Literature sources</h1>
+          <p class="sub">PubMed is the search platform. NLM and NCBI are the institutions and
+            infrastructure behind it — they are not separate sources to tick. Modelling them
+            correctly now is what makes adding a genuinely separate source later cheap.</p>
+        </div>
+
+        <div class="grid" style="margin-top:18px">
+          <div class="card">
+            <div class="card-hd"><h2>Configured sources</h2>
+              <div class="r"><button class="btn sm">Add source</button></div></div>
+            <div class="tw">
+              <table>
+                <thead><tr><th>Source</th><th>Provider</th><th>Access</th><th>Retrieval</th><th>Coverage</th><th>State</th></tr></thead>
+                <tbody>
+                  <tr>
+                    <td><span class="t-title">PubMed</span><span class="t-sub">bibliographic database</span></td>
+                    <td class="num">NLM / NCBI</td><td class="num">Public, free</td>
+                    <td class="num">E-utilities ESearch + EFetch</td>
+                    <td class="num">Title, abstract, MeSH</td><td><span class="pill ok">Enabled</span></td>
+                  </tr>
+                  <tr>
+                    <td><span class="t-title">PubMed Central (PMC)</span><span class="t-sub">open-access full text</span></td>
+                    <td class="num">NLM / NCBI</td><td class="num">Public, free</td>
+                    <td class="num">E-utilities, OA subset</td>
+                    <td class="num">Full text where OA</td><td><span class="pill warn">Enabled — partial</span></td>
+                  </tr>
+                  <tr>
+                    <td><span class="t-title">Embase</span><span class="t-sub">bibliographic database</span></td>
+                    <td class="num">Elsevier</td><td class="num">Subscription</td>
+                    <td class="num">—</td><td class="num">—</td><td><span class="pill">Later phase</span></td>
+                  </tr>
+                  <tr>
+                    <td><span class="t-title">Local / regional journals</span><span class="t-sub">not PubMed-indexed</span></td>
+                    <td class="num">Various</td><td class="num">Mixed</td>
+                    <td class="num">—</td><td class="num">—</td><td><span class="pill">Later phase</span></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-hd"><h2>PubMed — connection</h2>
+              <div class="r"><span class="pill ok">Healthy</span></div></div>
+            <div class="card-bd">
+              <div class="fields">
+                <div class="field"><span class="lbl">Contact email</span><span class="v mono">pv@northbay.example</span><span class="src">required by NCBI policy</span></div>
+                <div class="field"><span class="lbl">API key</span><span class="v mono">••••••••4f2a</span><span class="src">raises rate limit to 10 req/s</span></div>
+                <div class="field"><span class="lbl">Rate limit</span><span class="v mono">10 req/s</span></div>
+                <div class="field"><span class="lbl">Last successful call</span><span class="v mono">06 Aug 02:00</span></div>
+                <div class="field"><span class="lbl">Failures, last 7d</span><span class="v mono" style="color:var(--crit)">2</span></div>
+                <div class="field"><span class="lbl">Retry policy</span><span class="v mono">3 attempts, backoff</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ 9 · SCHEDULE ============ -->
+      <section class="screen" data-screen="schedule">
+        <div class="shd">
+          <span class="eyebrow">Steps 3 &amp; 4 · Automated search, validation and screening</span>
+          <h1>Search &amp; schedule</h1>
+          <p class="sub">Searches run to a schedule. The user never has to launch one by hand — but
+            they can see every query that ran, what it returned, and what failed.</p>
+        </div>
+
+        <div class="grid" style="margin-top:18px">
+          <div class="banner crit">
+            <div><b>2 products have no completed search in their monitoring period</b>
+              Both failures are HTTP 429 from NCBI E-utilities after 3 retries. Retry now, or
+              investigate the rate limit.</div>
+          </div>
+
+          <div class="card">
+            <div class="card-hd"><h2>Schedule</h2>
+              <div class="r"><button class="btn sm">Retry failed</button><button class="btn sm pri">Run now</button></div></div>
+            <div class="tw">
+              <table>
+                <thead><tr><th>Product</th><th>Frequency</th><th>Query</th><th>Last run</th><th>Next run</th><th>State</th></tr></thead>
+                <tbody>
+                  <tr><td>Glucomet / Metformin</td><td class="num">Weekly · Mon 02:00</td><td class="num">v3</td><td class="num">05 Aug 04:12</td><td class="num">12 Aug 02:00</td><td><span class="pill ok">Scheduled</span></td></tr>
+                  <tr><td>Lipicor / Atorvastatin</td><td class="num">Weekly · Mon 02:00</td><td class="num">v2</td><td class="num" style="color:var(--crit)">28 Jul 02:05</td><td class="num">12 Aug 02:00</td><td><span class="pill crit">Last run failed</span></td></tr>
+                  <tr><td>Amoxiclan</td><td class="num">Weekly · Mon 02:00</td><td class="num">v4</td><td class="num">05 Aug 04:18</td><td class="num">12 Aug 02:00</td><td><span class="pill ok">Scheduled</span></td></tr>
+                  <tr><td>Levracet / Levetiracetam</td><td class="num">Weekly · Mon 02:00</td><td class="num">v1</td><td class="num" style="color:var(--crit)">28 Jul 02:07</td><td class="num">12 Aug 02:00</td><td><span class="pill crit">Last run failed</span></td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="detail">
+            <div class="card">
+              <div class="card-hd"><h2>Query — Glucomet v3</h2>
+                <div class="r"><span class="pill ok">Approved · PV lead</span><button class="btn sm">Edit</button></div></div>
+              <div class="card-bd grid" style="gap:12px">
+                <div class="ph mono" style="min-height:96px;text-align:left;justify-content:flex-start;
+                  padding:11px;line-height:1.6;color:var(--ink-2)">("metformin"[tiab] OR "dimethylbiguanide"[tiab]
+                  OR "glucophage"[tiab] OR "metformin hydrochloride"[tiab]) AND ("adverse effects"[sh]
+                  OR "toxicity"[sh] OR "lactic acidosis"[tiab] OR "drug interaction*"[tiab] OR
+                  "pregnan*"[tiab] OR "overdose"[tiab] OR "product quality"[tiab] OR "medication
+                  error*"[tiab]) NOT ("review"[pt])</div>
+                <div class="fields">
+                  <div class="field"><span class="lbl">Term groups</span><span class="v">Molecule · AE · interaction · special situation · quality</span></div>
+                  <div class="field"><span class="lbl">Approved by</span><span class="v mono">S. Iyer, PV lead · 02 Aug</span></div>
+                  <div class="field"><span class="lbl">Effective from</span><span class="v mono">03 Aug 2026</span></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-hd"><h2>Exception queue</h2>
+                <div class="r"><span class="pill warn">37 open</span></div></div>
+              <div class="tw">
+                <table>
+                  <thead><tr><th>Cause</th><th>Count</th><th>Alerted</th></tr></thead>
+                  <tbody>
+                    <tr><td>Full text not retrievable</td><td class="num">22</td><td><span class="pill ok">Yes</span></td></tr>
+                    <tr><td>Extraction returned insufficient information</td><td class="num">11</td><td><span class="pill ok">Yes</span></td></tr>
+                    <tr><td>Source record could not be parsed</td><td class="num">4</td><td><span class="pill ok">Yes</span></td></tr>
+                    <tr><td>Search failed after retries</td><td class="num">2</td><td><span class="pill ok">Yes</span></td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <div class="card-bd" style="border-top:1px solid var(--line)">
+                <p class="muted" style="font-size:12px">Anything the pipeline cannot complete lands
+                  here and alerts the assigned user, rather than being dropped. The causes are held
+                  separately so they can be re-grouped once <i>invalid</i> is defined.</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-hd"><h2>Recent runs</h2></div>
+            <div class="tw">
+              <table>
+                <thead><tr><th>Run</th><th>Product</th><th>Started</th><th>Hits</th><th>New</th><th>Re-hits</th><th>Screened out</th><th>To review</th><th>State</th></tr></thead>
+                <tbody>
+                  <tr><td class="num">#4418</td><td>Amoxiclan</td><td class="num">05 Aug 04:18</td><td class="num">291</td><td class="num">24</td><td class="num">267</td><td class="num">21</td><td class="num">3</td><td><span class="pill ok">Completed</span></td></tr>
+                  <tr><td class="num">#4417</td><td>Glucomet</td><td class="num">05 Aug 04:12</td><td class="num">412</td><td class="num">37</td><td class="num">375</td><td class="num">31</td><td class="num">6</td><td><span class="pill ok">Completed</span></td></tr>
+                  <tr><td class="num">#4392</td><td>Lipicor</td><td class="num">28 Jul 02:05</td><td class="num muted">—</td><td class="num muted">—</td><td class="num muted">—</td><td class="num muted">—</td><td class="num muted">—</td><td><span class="pill crit">Failed · HTTP 429</span></td></tr>
+                  <tr><td class="num">#4391</td><td>Levracet</td><td class="num">28 Jul 02:07</td><td class="num muted">—</td><td class="num muted">—</td><td class="num muted">—</td><td class="num muted">—</td><td class="num muted">—</td><td><span class="pill crit">Failed · HTTP 429</span></td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </div>
+
+    <!-- ============ ANNOTATIONS ============ -->
+    <aside class="notes">
+      <div class="notes-hd">Build notes</div>
+
+      <div data-notes="dash">
+        <div class="note"><span class="chip chg">Changed</span>
+          <span class="nt">Ops page becomes two things</span>
+          <p>Today <code>OpsPage.tsx</code> shows infra metrics and background jobs. That stays as an
+            admin screen; this business dashboard is separate and is what the PV user opens first.</p></div>
+        <div class="note"><span class="chip new">New</span>
+          <span class="nt">Every tile drills through</span>
+          <p>Each tile is a link into the workspace pre-filtered to that metric. Requested explicitly
+            in step 12 and the main thing that stops a dashboard being decoration.</p></div>
+        <div class="note"><span class="chip new">New</span>
+          <span class="nt">Search-completion surface</span>
+          <p><code>SearchRun</code> already records status and errors. Nothing currently tells a user
+            that a product has gone unmonitored — two of the eight alert triggers depend on it.</p></div>
+        <div class="note"><span class="chip ex">Exists</span>
+          <span class="nt">Counts are already queryable</span>
+          <p><code>/api/queues/stats</code> and <code>/api/sla/overdue</code> cover part of this. The
+            funnel needs classification counts that the new taxonomy introduces.</p></div>
+      </div>
+
+      <div data-notes="workspace" hidden>
+        <div class="note"><span class="chip chg">Changed</span>
+          <span class="nt">Folders replace severity tabs</span>
+          <p>Current tabs are Expedited / Priority / Standard / QC — triage severity. Step 9 asks for
+            workflow state. Severity moves to the Pri column and to sort order, which is where it
+            belongs.</p></div>
+        <div class="note"><span class="chip new">New</span>
+          <span class="nt">Ten filters</span>
+          <p><code>/api/articles</code> currently filters on queue, status and open-only. Product,
+            ingredient, source, classification, signal status, submission status, assignee and
+            priority all need adding.</p></div>
+        <div class="note"><span class="chip new">New</span>
+          <span class="nt">Priority is not SLA</span>
+          <p>There is no priority field today — urgency is inferred from <code>sla_due_at</code>.
+            Alert priority definitions are still to be supplied by the partner.</p></div>
+        <div class="note"><span class="chip open">Open</span>
+          <span class="nt">Who owns what</span>
+          <p>One user for everything, one per product, or a primary plus backup? Drives whether the
+            Assigned filter is a convenience or load-balancing.</p></div>
+      </div>
+
+      <div data-notes="report" hidden>
+        <div class="note"><span class="chip chg">Changed</span>
+          <span class="nt">Nine classifications, not two</span>
+          <p><code>ArticleStatus</code> ends at <code>disposition_not_case</code> /
+            <code>disposition_valid_icsr</code>. Step 4 needs nine values, and classification has to
+            separate from workflow status — they are conflated in one enum today.</p></div>
+        <div class="note"><span class="chip new">New</span>
+          <span class="nt">Extraction becomes typed columns</span>
+          <p>Indication, dosage, outcome, country, reporter type and excerpts live in a loose
+            <code>entities</code> JSON blob on <code>ScreeningResult</code>. Step 5 lists ~18 fields
+            that need real columns to be filterable and validatable.</p></div>
+        <div class="note"><span class="chip new">New</span>
+          <span class="nt">Signal tags are a separate layer</span>
+          <p>Fourteen tags, multi-select, distinct from classification and from the review decision.
+            Confirmed signal is gated to PV lead.</p></div>
+        <div class="note"><span class="chip chg">Changed</span>
+          <span class="nt">Nine decisions, not six</span>
+          <p><code>DecisionAction</code> is ICSR-shaped. Step 10 adds mark-invalid, mark-duplicate,
+            not-relevant, prepare-for-submission, retain-internally and close.</p></div>
+        <div class="note"><span class="chip ex">Exists</span>
+          <span class="nt">ICSR checklist and audit</span>
+          <p>The four validity checkboxes, rationale capture and per-article audit already work in
+            <code>ArticlePage.tsx</code> — they fold into this screen rather than being rebuilt.</p></div>
+        <div class="note"><span class="chip new">New</span>
+          <span class="nt">The report is the artefact</span>
+          <p>Step 11 wants a standing document, not a review form. Same screen, but it must render
+            and export as a report for a file or an inspector.</p></div>
+      </div>
+
+      <div data-notes="alerts" hidden>
+        <div class="note"><span class="chip ex">Exists</span>
+          <span class="nt">The plumbing is real</span>
+          <p><code>notifications.py</code> logs and can send SMTP. It is wired to exactly one trigger
+            — SLA breach — and surfaced as one button on Ops.</p></div>
+        <div class="note"><span class="chip new">New</span>
+          <span class="nt">Seven more triggers</span>
+          <p>Signal detected, serious result, processing failure, awaiting review, deadline
+            approaching, unresolved past review period, search failed, no search in period.</p></div>
+        <div class="note"><span class="chip new">New</span>
+          <span class="nt">Alerts need to be records</span>
+          <p>There is no alert entity — events are logged and gone. Read state, priority, recipient
+            and channel all need persisting for this inbox to exist.</p></div>
+        <div class="note"><span class="chip open">Open</span>
+          <span class="nt">Which channels for the pilot</span>
+          <p>In-app and email are recommended and shown as on. The rest are drawn as later-phase so
+            the partner can see the ask was heard without it entering scope.</p></div>
+      </div>
+
+      <div data-notes="reg" hidden>
+        <div class="note"><span class="chip open">Open</span>
+          <span class="nt">The CDSCO schema is not known</span>
+          <p>No XML generation exists anywhere in the codebase — the only XML is PubMed EFetch
+            parsing. Schema, mandatory fields, validation rules, a sample accepted file and the
+            acknowledgement format are all still needed.</p></div>
+        <div class="note"><span class="chip ex">Exists</span>
+          <span class="nt">Field extraction is half-built</span>
+          <p><code>export_service.py</code> already emits patient, product, event, seriousness,
+            listedness, reviewer and decision as JSON and CSV. That is the input the XML mapping
+            would consume.</p></div>
+        <div class="note"><span class="chip new">New</span>
+          <span class="nt">Blocking validation</span>
+          <p>Generation must refuse while a mandatory field is missing, and name what is missing.
+            The rules cannot be written until the specification arrives — the mechanism can.</p></div>
+        <div class="note"><span class="chip new">New</span>
+          <span class="nt">Version store and submission record</span>
+          <p><code>ExportPackage</code> stores payloads but has no version chain, no submit/store
+            decision and no gateway reference.</p></div>
+        <div class="note"><span class="chip open">Open</span>
+          <span class="nt">Which gateway</span>
+          <p>CDSCO portal, PvPI, the manufacturer's own safety system, or a third-party platform.
+            Left as an unset dropdown rather than guessed.</p></div>
+      </div>
+
+      <div data-notes="audit" hidden>
+        <div class="note"><span class="chip ex">Exists</span>
+          <span class="nt">Largely built</span>
+          <p><code>AuditEvent</code> and <code>AuditPage.tsx</code> cover actor, action, entity,
+            payload and timestamp.</p></div>
+        <div class="note"><span class="chip chg">Changed</span>
+          <span class="nt">New event types</span>
+          <p>Alerts, classification changes, signal tagging, regulatory generation and submission
+            recording all need to write events.</p></div>
+        <div class="note"><span class="chip new">New</span>
+          <span class="nt">Exportable log</span>
+          <p>Inspection readiness is a stated selling point, so the log needs to leave the screen.</p></div>
+      </div>
+
+      <div data-notes="products" hidden>
+        <div class="note"><span class="chip chg">Changed</span>
+          <span class="nt">Six fields to add</span>
+          <p><code>Product</code> has name, inn, brands, synonyms and atc_code. Step 1 also needs
+            MAH, markets, monitoring frequency, responsible reviewer, and a real split between
+            generic name, active ingredient and API.</p></div>
+        <div class="note"><span class="chip new">New</span>
+          <span class="nt">Ingredient is not the same as API</span>
+          <p>The feedback lists them separately. For a combination product like amoxicillin with
+            clavulanate the distinction stops being academic.</p></div>
+        <div class="note"><span class="chip ex">Exists</span>
+          <span class="nt">Synonyms already drive the query</span>
+          <p>Versioned search strings with PV lead approval are already implemented — that
+            governance carries straight over.</p></div>
+        <div class="note"><span class="chip open">Open</span>
+          <span class="nt">The four products</span>
+          <p>Brand names here are placeholders. The real four, with synonyms, are on the partner's
+            input list.</p></div>
+      </div>
+
+      <div data-notes="sources" hidden>
+        <div class="note"><span class="chip new">New</span>
+          <span class="nt">Sources become configurable</span>
+          <p>PubMed is hardcoded in <code>services/pubmed/</code>. No source entity exists. Adding
+            one now is what makes step 2's "additional sources later" cheap rather than a rewrite.</p></div>
+        <div class="note"><span class="chip new">New</span>
+          <span class="nt">The PubMed / NLM / NCBI distinction, shown</span>
+          <p>Modelled as source versus provider rather than three checkboxes. The feedback calls this
+            out specifically as something the design must get right.</p></div>
+        <div class="note"><span class="chip ex">Exists</span>
+          <span class="nt">Connection health</span>
+          <p>Rate limiting, retry and E-utilities config are already in <code>core/config.py</code>
+            and the PubMed client — they just have no UI.</p></div>
+      </div>
+
+      <div data-notes="schedule" hidden>
+        <div class="note"><span class="chip chg">Changed</span>
+          <span class="nt">Schedule per product</span>
+          <p><code>workers/scheduled_search.py</code> exists but frequency is not a product
+            attribute and there is no schedule view. Step 3 says the user should never run a search
+            by hand.</p></div>
+        <div class="note"><span class="chip ex">Exists</span>
+          <span class="nt">Run history is complete</span>
+          <p><code>SearchRun</code> already records hits, new, re-hits, query snapshot, error and a
+            response hash. <code>SearchRunPage.tsx</code> shows it.</p></div>
+        <div class="note"><span class="chip new">New</span>
+          <span class="nt">Exception queue</span>
+          <p>Holds anything that could not be processed and alerts on it. Deliberately keeps causes
+            separate rather than collapsing them into one <i>invalid</i> bucket.</p></div>
+        <div class="note"><span class="chip open">Open</span>
+          <span class="nt">What "invalid" means</span>
+          <p>Seven candidate readings in the feedback. Until it is settled, the causes stay itemised
+            here and can be re-grouped in one place once the answer arrives.</p></div>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<script>
+(function(){
+  var screens = document.querySelectorAll("[data-screen]");
+  var noteSets = document.querySelectorAll("[data-notes]");
+  var links = document.querySelectorAll(".rail-link");
+
+  function go(key){
+    screens.forEach(function(s){ s.classList.toggle("is-active", s.dataset.screen === key); });
+    noteSets.forEach(function(n){ n.hidden = n.dataset.notes !== key; });
+    links.forEach(function(l){ l.classList.toggle("is-active", l.dataset.go === key); });
+    window.scrollTo({ top: 0, behavior: "instant" });
+  }
+
+  document.addEventListener("click", function(e){
+    var t = e.target.closest("[data-go]");
+    if (t) { go(t.dataset.go); }
+  });
+
+  document.getElementById("notesToggle").addEventListener("click", function(){
+    var on = this.getAttribute("aria-pressed") === "true";
+    this.setAttribute("aria-pressed", String(!on));
+    document.body.classList.toggle("notes-off", on);
+  });
+
+  document.getElementById("themeToggle").addEventListener("click", function(){
+    var root = document.documentElement;
+    var dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    var cur = root.getAttribute("data-theme") || (dark ? "dark" : "light");
+    root.setAttribute("data-theme", cur === "dark" ? "light" : "dark");
+  });
+
+  document.getElementById("notesToggle").setAttribute("aria-pressed", "true");
+})();
+</script>

@@ -68,7 +68,21 @@ Default admin: `admin@litmon.local` / `admin123`
 3. [API.md](API.md)  
 4. [pilot_runbook.md](pilot_runbook.md)  
 
-## Suggested next work (if user says “continue”)
+## ⚠️ Active work: partner feedback MVP rebuild
+
+The partner has requested a substantial expansion. **Before starting any feature work, read
+[MVP_BUILD_BRIEF.md](MVP_BUILD_BRIEF.md)** — it supersedes the backlog below.
+
+- [MVP_BUILD_BRIEF.md](MVP_BUILD_BRIEF.md) — phased implementation plan, open questions
+- [partner_feedback.md](partner_feedback.md) — the requirements themselves
+- [wireframes/mvp-wireframe.html](wireframes/mvp-wireframe.html) — approved wireframe, 9 screens,
+  with per-element build notes. Open in a browser. **This is the design authority.**
+
+Headline: the app today is an ICSR triage tool; the partner wants a PV literature-monitoring
+platform. The engine stays; the domain model above it and the surfaces on top change. The
+load-bearing change is splitting classification from workflow status in `ArticleStatus`.
+
+## Older backlog (superseded — see brief above)
 
 P0 (real-data) largely done in 0.2.1. Remaining backlog:
 

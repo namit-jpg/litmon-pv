@@ -42,7 +42,7 @@ def test_list_overdue():
             product_id=p.id,
             pmid="sla-overdue-1",
             title="Overdue test",
-            status=ArticleStatus.ROUTED,
+            status=ArticleStatus.AWAITING_REVIEW,
         )
         db.add(a)
         db.flush()

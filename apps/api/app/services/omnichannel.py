@@ -4,14 +4,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models import Article, Product, User
-from app.models.entities import ArticleStatus, PresenceStatus, Role
-
-
-CLOSED_STATUSES = (
-    ArticleStatus.AUTO_CLEAR,
-    ArticleStatus.DISPOSITION_NOT_CASE,
-    ArticleStatus.DISPOSITION_VALID_ICSR,
-)
+from app.models.entities import CLOSED_STATUSES, PresenceStatus, Role
 
 
 def active_work_count(db: Session, user_id: int) -> int:

@@ -74,7 +74,7 @@ def test_icsr_record_carries_api_tags_for_export():
         product_id=product.id,
         pmid="99887766",
         title="Anaphylaxis after co-amoxiclav",
-        status=ArticleStatus.DISPOSITION_VALID_ICSR,
+        status=ArticleStatus.APPROVED_FOR_SUBMISSION,
     )
     db.add(article)
     db.flush()
@@ -92,7 +92,7 @@ def test_untagged_product_falls_back_to_legacy_inn():
         product_id=product.id,
         pmid="11112222",
         title="Legacy case",
-        status=ArticleStatus.DISPOSITION_VALID_ICSR,
+        status=ArticleStatus.APPROVED_FOR_SUBMISSION,
     )
     db.add(article)
     db.flush()

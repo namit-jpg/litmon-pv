@@ -19,7 +19,13 @@ from app.models import (
     SearchString,
     TriageAssignment,
 )
-from app.models.entities import ArticleStatus, QueueType, SearchRunStatus
+from app.models.entities import (
+    ArticleStatus,
+    Classification,
+    Priority,
+    QueueType,
+    SearchRunStatus,
+)
 from app.services.ai.scorer import score_article
 from app.services.alerts import create_alert
 from app.services.omnichannel import route_article
@@ -27,6 +33,18 @@ from app.services.audit import log_event
 from app.services.pubmed.client import PubMedClient
 from app.services.pubmed.errors import PubMedError
 from app.services.triage.engine import route_screening
+
+
+#: Priority follows the queue the triage engine already picked, so the two
+#: cannot disagree. Expedited work is P1, priority P2, everything else P3.
+_QUEUE_PRIORITY = {
+    QueueType.EXPEDITED: Priority.P1,
+    QueueType.PRIORITY: Priority.P2,
+}
+
+
+def _priority_for_queue(queue: QueueType) -> Priority:
+    return _QUEUE_PRIORITY.get(queue, Priority.P3)
 
 
 def product_name_list(product: Product) -> list[str]:
@@ -149,7 +167,7 @@ async def run_search(
                     publication_types=dto.publication_types,
                     pubmed_url=dto.pubmed_url,
                     content_hash=dto.content_hash,
-                    status=ArticleStatus.INGESTED,
+                    status=ArticleStatus.NEW_ALERT,
                 )
                 db.add(article)
                 db.flush()
@@ -333,7 +351,12 @@ async def score_and_route_article(
 
     decision = route_screening(output)
     queue = decision.queue
-    status = ArticleStatus.ROUTED
+    status = ArticleStatus.AWAITING_REVIEW
+    # The AI proposal. Written once here and never overwritten — the reviewer's
+    # verdict lands in human_classification instead, so the override rate stays
+    # measurable.
+    classification = Classification.POTENTIALLY_RELEVANT
+    priority = _priority_for_queue(queue)
 
     if queue == QueueType.AUTO_CLEAR:
         # 10% QC sample
@@ -341,13 +364,10 @@ async def score_and_route_article(
             queue = QueueType.QC_SAMPLE
             status = ArticleStatus.QC_SAMPLE
         else:
-            status = ArticleStatus.AUTO_CLEAR
-    elif queue == QueueType.EXPEDITED:
-        status = ArticleStatus.ROUTED
-    elif queue == QueueType.PRIORITY:
-        status = ArticleStatus.ROUTED
-    else:
-        status = ArticleStatus.ROUTED
+            status = ArticleStatus.ARCHIVED
+            classification = Classification.IRRELEVANT
+    if decision.hard_rule_triggered:
+        classification = Classification.POTENTIAL_SAFETY_SIGNAL
 
     # Deactivate prior triage
     for t in article.triage_assignments:
@@ -367,7 +387,9 @@ async def score_and_route_article(
     )
     db.add(triage)
     article.status = status
-    if status != ArticleStatus.AUTO_CLEAR:
+    article.ai_classification = classification
+    article.priority = priority
+    if status != ArticleStatus.ARCHIVED:
         assignee, routing_reason = route_article(db, product=product, article=article)
         article.assignee_id = assignee.id if assignee else None
         if assignee:
@@ -449,7 +471,7 @@ def recall_article_to_review(
     article = db.get(Article, article_id)
     if not article:
         raise ValueError("Article not found")
-    article.status = ArticleStatus.UNDER_REVIEW
+    article.status = ArticleStatus.UNDER_ASSESSMENT
     # Ensure there is an active triage on standard queue if none
     triage = next((t for t in article.triage_assignments if t.is_active), None)
     if triage and triage.queue == QueueType.AUTO_CLEAR:

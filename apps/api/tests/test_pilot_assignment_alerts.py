@@ -52,7 +52,7 @@ def test_screening_assigns_product_reviewer_and_creates_alert(monkeypatch):
         pmid="pilot-assignment-1",
         title="Fatal reaction after PilotBrand: a case report",
         abstract="A patient died after receiving PilotBrand.",
-        status=ArticleStatus.INGESTED,
+        status=ArticleStatus.NEW_ALERT,
     )
     db.add(article)
     db.flush()
@@ -84,7 +84,7 @@ def test_signal_action_is_human_recorded_and_alerted():
         product_id=product.id,
         pmid="pilot-signal-1",
         title="Potential safety pattern",
-        status=ArticleStatus.ROUTED,
+        status=ArticleStatus.AWAITING_REVIEW,
         assignee_id=reviewer.id,
     )
     db.add(article)
@@ -161,7 +161,7 @@ def test_product_reviewer_change_reassigns_open_work():
         product_id=product.id,
         pmid="pilot-reassignment-1",
         title="Open literature review",
-        status=ArticleStatus.ROUTED,
+        status=ArticleStatus.AWAITING_REVIEW,
     )
     db.add(article)
     db.commit()
@@ -200,7 +200,7 @@ def test_omni_routes_primary_when_available_and_falls_back_when_busy():
     product = Product(name="Omni Product", primary_reviewer_id=primary.id)
     db.add(product)
     db.flush()
-    first = Article(product_id=product.id, pmid="omni-1", title="First", status=ArticleStatus.ROUTED)
+    first = Article(product_id=product.id, pmid="omni-1", title="First", status=ArticleStatus.AWAITING_REVIEW)
     db.add(first)
     db.flush()
 
@@ -209,7 +209,7 @@ def test_omni_routes_primary_when_available_and_falls_back_when_busy():
     assert reason == "primary_reviewer"
 
     primary.presence_status = PresenceStatus.BUSY
-    second = Article(product_id=product.id, pmid="omni-2", title="Second", status=ArticleStatus.ROUTED)
+    second = Article(product_id=product.id, pmid="omni-2", title="Second", status=ArticleStatus.AWAITING_REVIEW)
     db.add(second)
     db.flush()
     assignee, reason = route_article(db, product=product, article=second)
@@ -229,7 +229,7 @@ def test_omni_leaves_work_unassigned_when_everyone_unavailable():
     db.add(reviewer)
     db.flush()
     product = Product(name="No Capacity Product", primary_reviewer_id=reviewer.id)
-    article = Article(product=product, pmid="omni-3", title="Third", status=ArticleStatus.ROUTED)
+    article = Article(product=product, pmid="omni-3", title="Third", status=ArticleStatus.AWAITING_REVIEW)
     db.add(article)
     db.flush()
     assignee, reason = route_article(db, product=product, article=article)

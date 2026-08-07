@@ -32,11 +32,16 @@ from app.models import (
     User,
 )
 from app.models.entities import (
+    CLOSED_STATUSES,
+    WORKSPACE_FOLDERS,
+    ArticleSignalTag,
     ArticleStatus,
+    Classification,
     DecisionAction,
     QueueType,
     Role,
     SignalStatus,
+    SignalTag,
     PresenceStatus,
     product_active_ingredients,
 )
@@ -655,11 +660,7 @@ def update_product(
                 select(Article).where(
                     Article.product_id == product.id,
                     Article.status.notin_(
-                        [
-                            ArticleStatus.AUTO_CLEAR,
-                            ArticleStatus.DISPOSITION_NOT_CASE,
-                            ArticleStatus.DISPOSITION_VALID_ICSR,
-                        ]
+                        CLOSED_STATUSES
                     ),
                 )
             ).all()
@@ -1278,9 +1279,12 @@ def queue_stats(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> QueueStats:
+    # Archived is deliberately not "closed" here: these counts drive the queue
+    # tiles, and an auto-cleared article should still be countable.
     closed = [
-        ArticleStatus.DISPOSITION_NOT_CASE,
-        ArticleStatus.DISPOSITION_VALID_ICSR,
+        ArticleStatus.NOT_FOR_SUBMISSION,
+        ArticleStatus.APPROVED_FOR_SUBMISSION,
+        ArticleStatus.SUBMITTED,
     ]
 
     def count_queue(q: QueueType) -> int:
@@ -1309,9 +1313,11 @@ def queue_stats(
         priority=count_queue(QueueType.PRIORITY),
         standard=count_queue(QueueType.STANDARD),
         qc_sample=count_queue(QueueType.QC_SAMPLE),
-        auto_clear=count_status(ArticleStatus.AUTO_CLEAR),
-        valid_icsr=count_status(ArticleStatus.DISPOSITION_VALID_ICSR),
-        not_case=count_status(ArticleStatus.DISPOSITION_NOT_CASE),
+        # Field names are kept as-is so the existing queue UI keeps working;
+        # what they count is now the post-split equivalent.
+        auto_clear=count_status(ArticleStatus.ARCHIVED),
+        valid_icsr=count_status(ArticleStatus.APPROVED_FOR_SUBMISSION),
+        not_case=count_status(ArticleStatus.NOT_FOR_SUBMISSION),
         deferred=count_status(ArticleStatus.DEFERRED),
         second_review=count_status(ArticleStatus.SECOND_REVIEW),
     )
@@ -1360,21 +1366,13 @@ def list_articles(
         # Archive browse: auto-clear + not-case + valid icsr
         query = query.where(
             Article.status.in_(
-                [
-                    ArticleStatus.AUTO_CLEAR,
-                    ArticleStatus.DISPOSITION_NOT_CASE,
-                    ArticleStatus.DISPOSITION_VALID_ICSR,
-                ]
+                CLOSED_STATUSES
             )
         )
     elif open_only and not status:
         query = query.where(
             Article.status.notin_(
-                [
-                    ArticleStatus.DISPOSITION_NOT_CASE,
-                    ArticleStatus.DISPOSITION_VALID_ICSR,
-                    ArticleStatus.AUTO_CLEAR,
-                ]
+                CLOSED_STATUSES
             )
         )
     if q:
@@ -1532,12 +1530,12 @@ def claim_article(
         raise HTTPException(404, "Article not found")
     a.assignee_id = user.id
     if a.status in (
-        ArticleStatus.ROUTED,
+        ArticleStatus.AWAITING_REVIEW,
         ArticleStatus.QC_SAMPLE,
         ArticleStatus.SECOND_REVIEW,
         ArticleStatus.DEFERRED,
     ):
-        a.status = ArticleStatus.UNDER_REVIEW
+        a.status = ArticleStatus.UNDER_ASSESSMENT
     log_event(
         db,
         actor=user.email,
@@ -1547,6 +1545,43 @@ def claim_article(
     )
     db.commit()
     return {"article_id": a.id, "assignee_id": user.id}
+
+
+def _set_signal_tag(
+    db: Session, article: Article, tag: SignalTag, user: User
+) -> ArticleSignalTag:
+    """Apply a signal tag, enforcing the confirmed-signal rule.
+
+    A report must not become a confirmed signal without human assessment, so
+    ``confirmed_signal`` requires a PV lead *and* an existing ReviewDecision.
+    Tags are idempotent — re-applying one keeps the original attribution.
+    """
+    if tag == SignalTag.CONFIRMED_SIGNAL:
+        if user.role not in (Role.PV_LEAD, Role.ADMIN):
+            raise HTTPException(403, "PV lead required to confirm a signal")
+        has_decision = db.scalar(
+            select(func.count())
+            .select_from(ReviewDecision)
+            .where(ReviewDecision.article_id == article.id)
+        )
+        if not has_decision:
+            raise HTTPException(
+                409, "A review decision must be recorded before confirming a signal"
+            )
+
+    existing = db.scalar(
+        select(ArticleSignalTag).where(
+            ArticleSignalTag.article_id == article.id,
+            ArticleSignalTag.tag == tag,
+        )
+    )
+    if existing:
+        return existing
+    row = ArticleSignalTag(
+        article_id=article.id, tag=tag, is_ai_proposed=False, set_by_user_id=user.id
+    )
+    db.add(row)
+    return row
 
 
 @router.post("/articles/{article_id}/review", response_model=ReviewOut)
@@ -1582,28 +1617,50 @@ def submit_review(
     db.flush()
 
     if body.action == DecisionAction.CONFIRM_NOT_CASE:
-        a.status = ArticleStatus.DISPOSITION_NOT_CASE
+        a.status = ArticleStatus.NOT_FOR_SUBMISSION
+        a.human_classification = Classification.IRRELEVANT
     elif body.action == DecisionAction.CONFIRM_VALID_ICSR:
-        a.status = ArticleStatus.DISPOSITION_VALID_ICSR
+        a.status = ArticleStatus.APPROVED_FOR_SUBMISSION
+        a.human_classification = Classification.ADVERSE_EVENT_RELATED
     elif body.action == DecisionAction.REQUEST_SECOND_REVIEW:
         a.status = ArticleStatus.SECOND_REVIEW
     elif body.action == DecisionAction.DEFER_FULL_TEXT:
         a.status = ArticleStatus.DEFERRED
     elif body.action == DecisionAction.RECALL_TO_REVIEW:
-        a.status = ArticleStatus.UNDER_REVIEW
+        a.status = ArticleStatus.UNDER_ASSESSMENT
     elif body.action == DecisionAction.OVERRIDE_AI:
-        a.status = ArticleStatus.UNDER_REVIEW
+        a.status = ArticleStatus.UNDER_ASSESSMENT
     elif body.action == DecisionAction.MARK_POTENTIAL_SIGNAL:
         a.signal_status = SignalStatus.POTENTIAL
-        a.status = ArticleStatus.UNDER_REVIEW
+        a.status = ArticleStatus.UNDER_ASSESSMENT
+        a.human_classification = Classification.POTENTIAL_SAFETY_SIGNAL
+        _set_signal_tag(db, a, SignalTag.POTENTIAL_SIGNAL, user)
     elif body.action == DecisionAction.CONFIRM_SIGNAL:
-        if user.role not in (Role.PV_LEAD, Role.ADMIN, Role.SENIOR_REVIEWER):
-            raise HTTPException(403, "Senior reviewer or PV lead required to confirm a signal")
+        # Permission lives in _set_signal_tag so the decision path and the tag
+        # path cannot drift. Note this is stricter than before: PV lead or
+        # admin only, where senior reviewers used to qualify.
+        _set_signal_tag(db, a, SignalTag.CONFIRMED_SIGNAL, user)
         a.signal_status = SignalStatus.CONFIRMED
-        a.status = ArticleStatus.UNDER_REVIEW
+        a.status = ArticleStatus.UNDER_ASSESSMENT
     elif body.action == DecisionAction.REJECT_SIGNAL:
         a.signal_status = SignalStatus.REJECTED
-        a.status = ArticleStatus.UNDER_REVIEW
+        a.status = ArticleStatus.UNDER_ASSESSMENT
+    # The six actions the partner added in step 10.
+    elif body.action == DecisionAction.MARK_INVALID:
+        a.status = ArticleStatus.EXCEPTION
+        a.human_classification = Classification.INVALID
+    elif body.action == DecisionAction.MARK_DUPLICATE:
+        a.status = ArticleStatus.ARCHIVED
+        a.human_classification = Classification.DUPLICATE
+    elif body.action == DecisionAction.MARK_NOT_RELEVANT:
+        a.status = ArticleStatus.ARCHIVED
+        a.human_classification = Classification.IRRELEVANT
+    elif body.action == DecisionAction.PREPARE_FOR_SUBMISSION:
+        a.status = ArticleStatus.APPROVED_FOR_SUBMISSION
+    elif body.action == DecisionAction.RETAIN_INTERNALLY:
+        a.status = ArticleStatus.NOT_FOR_SUBMISSION
+    elif body.action == DecisionAction.CLOSE_REPORT:
+        a.status = ArticleStatus.ARCHIVED
 
     if body.action in (
         DecisionAction.MARK_POTENTIAL_SIGNAL,
@@ -1688,15 +1745,7 @@ def dashboard_summary(
             q = q.where(*conditions)
         return db.scalar(q) or 0
 
-    open_statuses = [
-        ArticleStatus.INGESTED,
-        ArticleStatus.SCORED,
-        ArticleStatus.ROUTED,
-        ArticleStatus.UNDER_REVIEW,
-        ArticleStatus.DEFERRED,
-        ArticleStatus.SECOND_REVIEW,
-        ArticleStatus.QC_SAMPLE,
-    ]
+    open_statuses = [s for s in ArticleStatus if s not in CLOSED_STATUSES]
     by_product_q = (
         select(Product.id, Product.name, func.count(Article.id))
         .join(Article, Article.product_id == Product.id)
@@ -1812,8 +1861,8 @@ def dashboard_summary(
         ),
         "potential_signals": count_where(Article.signal_status == SignalStatus.POTENTIAL),
         "confirmed_signals": count_where(Article.signal_status == SignalStatus.CONFIRMED),
-        "valid_icsr": count_where(Article.status == ArticleStatus.DISPOSITION_VALID_ICSR),
-        "not_relevant": count_where(Article.status == ArticleStatus.DISPOSITION_NOT_CASE),
+        "valid_icsr": count_where(Article.status == ArticleStatus.APPROVED_FOR_SUBMISSION),
+        "not_relevant": count_where(Article.status == ArticleStatus.NOT_FOR_SUBMISSION),
         "deferred": count_where(Article.status == ArticleStatus.DEFERRED),
         "overdue": len(overdue),
         "unread_alerts": unread,
@@ -2082,11 +2131,7 @@ def job_batch_rescore(
         open_arts = db.scalars(
             select(Article).where(
                 Article.status.notin_(
-                    [
-                        ArticleStatus.DISPOSITION_NOT_CASE,
-                        ArticleStatus.DISPOSITION_VALID_ICSR,
-                        ArticleStatus.AUTO_CLEAR,
-                    ]
+                    CLOSED_STATUSES
                 )
             )
         ).all()

@@ -9,13 +9,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Article, TriageAssignment
-from app.models.entities import ArticleStatus, QueueType
+from app.models.entities import CLOSED_STATUSES, QueueType
 
-CLOSED = {
-    ArticleStatus.DISPOSITION_NOT_CASE,
-    ArticleStatus.DISPOSITION_VALID_ICSR,
-    ArticleStatus.AUTO_CLEAR,
-}
+CLOSED = set(CLOSED_STATUSES)
 
 
 def list_overdue_articles(db: Session, now: datetime | None = None) -> list[dict[str, Any]]:

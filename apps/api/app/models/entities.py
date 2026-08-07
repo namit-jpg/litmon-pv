@@ -52,16 +52,121 @@ class ScheduleFrequency(str, enum.Enum):
 
 
 class ArticleStatus(str, enum.Enum):
-    INGESTED = "ingested"
-    SCORED = "scored"
-    ROUTED = "routed"
-    UNDER_REVIEW = "under_review"
+    """Where an article sits in the workflow — nothing about *what* it is.
+
+    What the article turned out to be is :class:`Classification`; whether it is
+    a signal is :class:`SignalTag`. Keeping the three apart is what lets a
+    "potential safety signal" article still be "awaiting review".
+
+    The old enum's ``disposition_*`` and ``auto_clear`` members described
+    outcomes, not position, and have moved to Classification. ``deferred``,
+    ``second_review`` and ``qc_sample`` stay: they are genuinely about where an
+    article sits, even though the wireframe has no folder for them. The
+    workspace folders are *views* over this enum plus the signal tags, not a
+    one-to-one mapping — see ``WORKSPACE_FOLDERS``.
+    """
+
+    NEW_ALERT = "new_alert"
+    AWAITING_REVIEW = "awaiting_review"
+    UNDER_ASSESSMENT = "under_assessment"
     DEFERRED = "deferred"
     SECOND_REVIEW = "second_review"
-    AUTO_CLEAR = "auto_clear"
     QC_SAMPLE = "qc_sample"
-    DISPOSITION_NOT_CASE = "disposition_not_case"
-    DISPOSITION_VALID_ICSR = "disposition_valid_icsr"
+    EXCEPTION = "exception"
+    APPROVED_FOR_SUBMISSION = "approved_for_submission"
+    NOT_FOR_SUBMISSION = "not_for_submission"
+    SUBMITTED = "submitted"
+    ARCHIVED = "archived"
+
+
+class Classification(str, enum.Enum):
+    """What the article is. Proposed by the pipeline, confirmed by a human."""
+
+    POTENTIALLY_RELEVANT = "potentially_relevant"
+    POTENTIAL_SAFETY_SIGNAL = "potential_safety_signal"
+    ADVERSE_EVENT_RELATED = "adverse_event_related"
+    PRODUCT_QUALITY_RELATED = "product_quality_related"
+    DUPLICATE = "duplicate"
+    IRRELEVANT = "irrelevant"
+    INVALID = "invalid"
+    INSUFFICIENT_INFORMATION = "insufficient_information"
+    REQUIRES_HUMAN_REVIEW = "requires_human_review"
+
+
+class SignalTag(str, enum.Enum):
+    """Multi-select tags. Distinct from classification and from decision."""
+
+    POTENTIAL_SIGNAL = "potential_signal"
+    CONFIRMED_SIGNAL = "confirmed_signal"
+    UNDER_REVIEW = "under_review"
+    ADVERSE_EVENT = "adverse_event"
+    SERIOUS_ADVERSE_EVENT = "serious_adverse_event"
+    PRODUCT_QUALITY_ISSUE = "product_quality_issue"
+    LACK_OF_EFFICACY = "lack_of_efficacy"
+    DRUG_INTERACTION = "drug_interaction"
+    SPECIAL_SITUATION = "special_situation"
+    DUPLICATE = "duplicate"
+    INVALID = "invalid"
+    NOT_RELEVANT = "not_relevant"
+    SUBMISSION_REQUIRED = "submission_required"
+    SUBMISSION_NOT_REQUIRED = "submission_not_required"
+
+
+class ExceptionCause(str, enum.Enum):
+    """Why the pipeline could not finish.
+
+    The partner's meaning of "invalid" is unresolved (feedback section 8), so
+    causes stay itemised rather than collapsed into one bucket. They can be
+    regrouped in one place once the definition is confirmed.
+    """
+
+    FULL_TEXT_UNAVAILABLE = "full_text_unavailable"
+    INSUFFICIENT_INFORMATION = "insufficient_information"
+    SOURCE_PARSE_ERROR = "source_parse_error"
+    SEARCH_FAILED = "search_failed"
+    EXTRACTION_FAILED = "extraction_failed"
+
+
+class Priority(str, enum.Enum):
+    P1 = "p1"
+    P2 = "p2"
+    P3 = "p3"
+
+
+#: The nine folders the wireframe shows, as views over status + signal tag.
+#: "Potential signals" is a tag filter rather than a status because an article
+#: can be a potential signal *and* awaiting review at the same time — which is
+#: the whole reason the old enum had to be split.
+WORKSPACE_FOLDERS: dict[str, dict[str, Any]] = {
+    "new_alerts": {"statuses": [ArticleStatus.NEW_ALERT]},
+    "awaiting_review": {
+        "statuses": [ArticleStatus.AWAITING_REVIEW, ArticleStatus.QC_SAMPLE]
+    },
+    "potential_signals": {"signal_tags": [SignalTag.POTENTIAL_SIGNAL]},
+    "under_assessment": {
+        "statuses": [
+            ArticleStatus.UNDER_ASSESSMENT,
+            ArticleStatus.DEFERRED,
+            ArticleStatus.SECOND_REVIEW,
+        ]
+    },
+    "exceptions": {"statuses": [ArticleStatus.EXCEPTION]},
+    "approved_for_submission": {"statuses": [ArticleStatus.APPROVED_FOR_SUBMISSION]},
+    "not_for_submission": {"statuses": [ArticleStatus.NOT_FOR_SUBMISSION]},
+    "submitted": {"statuses": [ArticleStatus.SUBMITTED]},
+    "archived": {"statuses": [ArticleStatus.ARCHIVED]},
+}
+
+#: Terminal states — an article here needs no further reviewer action. Several
+#: call sites previously spelled this set out inline as the three disposition
+#: statuses; naming it once keeps SLA, omnichannel routing and queue counts
+#: from drifting apart.
+CLOSED_STATUSES: tuple[ArticleStatus, ...] = (
+    ArticleStatus.APPROVED_FOR_SUBMISSION,
+    ArticleStatus.NOT_FOR_SUBMISSION,
+    ArticleStatus.SUBMITTED,
+    ArticleStatus.ARCHIVED,
+)
 
 
 class QueueType(str, enum.Enum):
@@ -82,6 +187,12 @@ class DecisionAction(str, enum.Enum):
     MARK_POTENTIAL_SIGNAL = "mark_potential_signal"
     CONFIRM_SIGNAL = "confirm_signal"
     REJECT_SIGNAL = "reject_signal"
+    MARK_INVALID = "mark_invalid"
+    MARK_DUPLICATE = "mark_duplicate"
+    MARK_NOT_RELEVANT = "mark_not_relevant"
+    PREPARE_FOR_SUBMISSION = "prepare_for_submission"
+    RETAIN_INTERNALLY = "retain_internally"
+    CLOSE_REPORT = "close_report"
 
 
 class SignalStatus(str, enum.Enum):
@@ -200,6 +311,14 @@ class Product(Base):
     brands: Mapped[list[Any]] = mapped_column(JSON, default=list)
     synonyms: Mapped[list[Any]] = mapped_column(JSON, default=list)
     atc_code: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    # Marketing authorisation holder, and the markets the product is sold in.
+    # Both are regulatory facts about the licence rather than the molecule, so
+    # they cannot come from RxNorm and have to be entered. Everything else the
+    # partner listed under step 1 is already covered: molecule identity by
+    # DrugConcept/ActiveIngredient, frequency by SearchSchedule, and the
+    # responsible user by primary_reviewer_id below.
+    mah: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    markets: Mapped[list[Any]] = mapped_column(JSON, default=list)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     primary_reviewer_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("users.id"), nullable=True, index=True
@@ -329,7 +448,25 @@ class Article(Base):
     pubmed_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     content_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     status: Mapped[ArticleStatus] = mapped_column(
-        Enum(ArticleStatus), default=ArticleStatus.INGESTED, index=True
+        Enum(ArticleStatus), default=ArticleStatus.NEW_ALERT, index=True
+    )
+    # The AI proposal is written once and never overwritten; the human value is
+    # what the reviewer confirmed or overrode it with. Keeping both is what
+    # makes the override rate measurable.
+    ai_classification: Mapped[Optional[Classification]] = mapped_column(
+        Enum(Classification), nullable=True, index=True
+    )
+    human_classification: Mapped[Optional[Classification]] = mapped_column(
+        Enum(Classification), nullable=True, index=True
+    )
+    priority: Mapped[Priority] = mapped_column(
+        Enum(Priority), default=Priority.P3, index=True
+    )
+    exception_cause: Mapped[Optional[ExceptionCause]] = mapped_column(
+        Enum(ExceptionCause), nullable=True, index=True
+    )
+    literature_source_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("literature_sources.id"), nullable=True, index=True
     )
     assignee_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("users.id"), nullable=True
@@ -356,6 +493,63 @@ class Article(Base):
     )
     review_decisions: Mapped[list[ReviewDecision]] = relationship(
         back_populates="article"
+    )
+    signal_tags: Mapped[list[ArticleSignalTag]] = relationship(
+        back_populates="article", lazy="selectin", cascade="all, delete-orphan"
+    )
+    literature_source: Mapped[Optional[LiteratureSource]] = relationship()
+
+
+class ArticleSignalTag(Base):
+    """One signal tag on one article.
+
+    A row per tag rather than a JSON list so the workspace can filter on it and
+    so we keep who applied it. ``confirmed_signal`` is guarded at the service
+    layer: pv_lead only, and only once a ReviewDecision exists.
+    """
+
+    __tablename__ = "article_signal_tags"
+    __table_args__ = (
+        UniqueConstraint("article_id", "tag", name="uq_article_signal_tags"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    article_id: Mapped[int] = mapped_column(
+        ForeignKey("articles.id", ondelete="CASCADE"), index=True
+    )
+    tag: Mapped[SignalTag] = mapped_column(Enum(SignalTag), index=True)
+    is_ai_proposed: Mapped[bool] = mapped_column(Boolean, default=False)
+    set_by_user_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    article: Mapped[Article] = relationship(back_populates="signal_tags")
+
+
+class LiteratureSource(Base):
+    """A searchable literature source.
+
+    PubMed and PMC are *sources*; NLM/NCBI is the *provider* behind them. The
+    partner's step 2 calls this distinction out explicitly, so provider is a
+    field rather than a separate row — otherwise NLM and NCBI look like two
+    more databases to tick.
+    """
+
+    __tablename__ = "literature_sources"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(128), unique=True)
+    kind: Mapped[str] = mapped_column(String(64), default="bibliographic")
+    provider: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    access_model: Mapped[str] = mapped_column(String(64), default="public")
+    retrieval: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    coverage: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
     )
 
 
@@ -384,6 +578,24 @@ class ScreeningResult(Base):
     icsr_criteria_match: Mapped[float] = mapped_column(Float)
     composite: Mapped[float] = mapped_column(Float, index=True)
     entities: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    # Promoted out of the ``entities`` blob above so the workspace can filter
+    # and the regulatory validator can check them. ``entities`` stays as the
+    # raw model output; these are the fields we commit to.
+    indication: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    dosage: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    outcome: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    seriousness: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    country_of_occurrence: Mapped[Optional[str]] = mapped_column(
+        String(128), nullable=True, index=True
+    )
+    reporter_type: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    concomitant_medication: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    article_excerpts: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    relevance_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    processed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     icsr_precheck: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     reason_tags: Mapped[list[Any]] = mapped_column(JSON, default=list)
     hard_rule_candidates: Mapped[list[Any]] = mapped_column(JSON, default=list)
@@ -495,6 +707,10 @@ class Alert(Base):
     )
     alert_type: Mapped[str] = mapped_column(String(64), index=True)
     priority: Mapped[str] = mapped_column(String(16), default="normal", index=True)
+    # Which channels this alert actually went out on. In-app and email only for
+    # the pilot; the list shape is what lets SMS/Teams/Slack land later without
+    # a further migration.
+    channels: Mapped[list[Any]] = mapped_column(JSON, default=list)
     title: Mapped[str] = mapped_column(String(255))
     message: Mapped[str] = mapped_column(Text)
     dedupe_key: Mapped[Optional[str]] = mapped_column(
