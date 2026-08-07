@@ -13,10 +13,14 @@
 | [pilot_runbook.md](pilot_runbook.md) | PV ops | Day-to-day pilot operations |
 | [parallel_run_protocol.md](parallel_run_protocol.md) | PV Lead | Sensitivity parallel-run process |
 | [CHANGELOG.md](CHANGELOG.md) | Everyone | Notable version history |
-| [thursday_pilot_plan.md](thursday_pilot_plan.md) | Demo team | Two-day assignment, signal, dashboard, and alerts delivery plan |
+| [thursday_pilot_plan.md](thursday_pilot_plan.md) | Historical reference | Superseded 6 August assignment-routing demo plan |
+| [phase3_4_manual_test.md](phase3_4_manual_test.md) | Demo team | Manual functional test for the completed MVP screens and workflows |
 
 ## Status
 
-**Phase 1 pilot** — functional end-to-end system for one product line, PubMed-only literature source, human-in-the-loop decisions, export-only case handoff.
+**Partner-feedback MVP, Phases 1–4 implemented** — PubMed monitoring,
+classification/workflow separation, reviewer workspaces, in-app alerts,
+printable detection reports, exceptions, and human-controlled regulatory
+generation/storage. Manual pilot rehearsal remains required.
 
 **Not** GxP validated. Production requires Phase 2 CSV / SOP / Quality audit.

@@ -4,30 +4,33 @@
 
 AI-assisted, human-in-the-loop pipeline for systematic literature review (SLR), ICSR case detection, and signal-relevant article triage.
 
-[![Status](https://img.shields.io/badge/status-phase%201%20pilot-blue)](.)
+[![Status](https://img.shields.io/badge/status-partner%20MVP-blue)](.)
 [![Not GxP](https://img.shields.io/badge/GxP-not%20validated-orange)](.)
 
 > **Core principle:** Automate search and first-pass triage; keep a qualified human as the final decision-maker. The AI ranks, flags, and explains — it never silently discards a potentially reportable article without an audit trail.
 
 ---
 
-## Features (Phase 1 pilot)
+## Features (partner-feedback MVP)
 
 - **PubMed search** via NCBI E-utilities (free public API — not scraping)
 - **Dedup** by PMID/DOI across runs
-- **AI screening** — product match, event relevance, ICSR criteria + reason tags  
+- **AI screening** — product match, event relevance, ICSR criteria + reason tags
   (mock heuristic offline; real LLM via OpenAI-compatible API)
 - **Triage queues** — Auto-Clear (with QC sample), Standard, Priority, Expedited + SLAs
-- **Omnichannel assignment pilot** — product reviewer routing, My Work, and reassignment
+- **Product-based reviewer assignment** — responsible reviewer routing, My Work, and reassignment
 - **Signal workflow** — human-controlled potential / confirmed / rejected signal status
-- **PV dashboard & alert inbox** — drill-through workload metrics and persistent in-app alerts
-- **Reviewer workspace** — article card, ICSR checklist, claim/override/second review/defer
+- **PV dashboard & alert inbox** — all Step-12 measures, drill-through filters, and eight persistent in-app alert triggers
+- **Reviewer workspace** — nine workflow folders and ten PV filters, with priority-driven sorting
+- **Detection report** — structured extraction, AI and human classification, signal tags, ICSR checklist, decision/audit history, and print/save output
+- **Submission & storage** — data-driven mandatory-field validation, versioned prototype XML, download, submit-or-retain decision, and manual gateway evidence
+- **Product/source/schedule administration** — explicit product licence facts, APIs, responsible reviewer, source/provider separation, recurring searches, and exception summary
 - **Archive & recall** — reversible, searchable
 - **Imports** — PMID list or CSV (backup if PubMed is down)
 - **Exports** — ICSR handoff + parallel-run comparison (JSON/CSV)
 - **Evaluation** — gold-label sensitivity harness
-- **Ops** — metrics, background jobs, SLA breach notify
-- **Audit trail** — inspection-oriented event log
+- **Ops** — metrics, background jobs, and automated time-driven SLA checks
+- **Audit trail** — filterable, CSV-exportable inspection-oriented event log
 
 ---
 
@@ -71,8 +74,8 @@ python -m app.bootstrap
 uvicorn app.main:app --reload --port 8000
 ```
 
-- API: http://127.0.0.1:8000  
-- OpenAPI: http://127.0.0.1:8000/docs  
+- API: http://127.0.0.1:8000
+- OpenAPI: http://127.0.0.1:8000/docs
 
 ### Frontend
 
@@ -82,7 +85,7 @@ npm install
 npm run dev
 ```
 
-- App: http://localhost:5173  
+- App: http://localhost:5173
 
 ### Demo logins
 
@@ -92,7 +95,10 @@ npm run dev
 | `reviewer@litmon.local` | `reviewer123` | Reviewer |
 | `pvlead@litmon.local` | `pvlead123` | PV Lead |
 
-After login: **Admin → Seed demo articles** for an offline walkthrough.
+After login, add or select a monitored drug under **Product search**, assign its
+responsible reviewer under **Products**, and run a bounded PubMed search.
+
+Manual MVP test: [docs/phase3_4_manual_test.md](docs/phase3_4_manual_test.md)
 
 **Full setup (new laptop):** [docs/SETUP.md](docs/SETUP.md)
 
@@ -112,6 +118,7 @@ After login: **Admin → Seed demo articles** for an offline walkthrough.
 | [docs/pubmed.md](docs/pubmed.md) | PubMed E-utilities |
 | [docs/model_card.md](docs/model_card.md) | Screening model card |
 | [docs/parallel_run_protocol.md](docs/parallel_run_protocol.md) | Manual parallel-run protocol |
+| [docs/phase3_4_manual_test.md](docs/phase3_4_manual_test.md) | Phase 3/4 manual functional test |
 | [docs/CHANGELOG.md](docs/CHANGELOG.md) | Version history |
 
 ---
@@ -147,7 +154,6 @@ litmon-pv/
 ├── docs/              # Documentation
 ├── workers/           # scheduled_search, perf_smoke
 ├── .env.example
-├── docker-compose.yml # Optional Postgres/Redis
 └── README.md
 ```
 
@@ -180,9 +186,9 @@ python -m pytest tests -q
 
 ## Working with another agent / laptop
 
-1. Clone this repo on the other machine ([SETUP.md](docs/SETUP.md)).  
-2. Point the agent at **[docs/AGENTS.md](docs/AGENTS.md)** for context.  
-3. Use feature branches and pull requests.  
+1. Clone this repo on the other machine ([SETUP.md](docs/SETUP.md)).
+2. Point the agent at **[docs/AGENTS.md](docs/AGENTS.md)** for context.
+3. Use feature branches and pull requests.
 4. Never commit `.env`, databases, or API keys.
 
 ---

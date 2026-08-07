@@ -128,6 +128,17 @@ async def run_schedule(db: Session, schedule: SearchSchedule) -> dict:
         schedule.last_error = "Product has no active search string"
         schedule.last_run_at = now
         schedule.next_run_at = advance_past(now, schedule.frequency, now)
+        from app.services import triggers
+
+        product = db.get(Product, schedule.product_id)
+        if product:
+            triggers.search_failed(
+                db,
+                product=product,
+                user_id=product.primary_reviewer_id,
+                run_id=f"schedule-{schedule.id}-no-string-{now:%Y-%m-%d}",
+                error=schedule.last_error,
+            )
         db.commit()
         return {**outcome, "status": "no_active_search_string"}
 
@@ -197,8 +208,13 @@ async def _runner_loop() -> None:
             db = SessionLocal()
             try:
                 fired = await run_due_schedules(db)
+                from app.services import triggers
+
+                time_alerts = triggers.run_time_driven_alerts(db)
                 if fired:
                     logger.info("Fired %d scheduled search(es)", len(fired))
+                if any(time_alerts[key] for key in ("overdue", "due_soon", "unmonitored_products")):
+                    logger.info("Time-driven alerts: %s", time_alerts)
             finally:
                 db.close()
         except asyncio.CancelledError:

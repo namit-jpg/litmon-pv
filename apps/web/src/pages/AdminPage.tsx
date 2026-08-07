@@ -1,805 +1,107 @@
-import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
-import { api, EvalResult, Product, ThresholdsConfig, User } from "../api";
-
-const DATE_PRESETS = [
-  { label: "7 days", days: 7 },
-  { label: "14 days", days: 14 },
-  { label: "30 days", days: 30 },
-] as const;
-
+import { useCallback, useEffect, useState } from "react";
+import { api, EvalResult, Product, ThresholdsConfig } from "../api";
 
 export default function AdminPage() {
   const [products, setProducts] = useState<Product[]>([]);
-  const [users, setUsers] = useState<User[]>([]);
-  const [strings, setStrings] = useState<
-    {
-      id: number;
-      product_id: number;
-      query_text: string;
-      version: number;
-      is_active?: boolean;
-    }[]
-  >([]);
-  const [runs, setRuns] = useState<Record<string, unknown>[]>([]);
-  const [exports, setExports] = useState<Record<string, unknown>[]>([]);
-  const [evalResult, setEvalResult] = useState<EvalResult | null>(null);
   const [thresholds, setThresholds] = useState<ThresholdsConfig | null>(null);
+  const [exports, setExports] = useState<Record<string, unknown>[]>([]);
+  const [evaluation, setEvaluation] = useState<EvalResult | null>(null);
+  const [productId, setProductId] = useState<number | "">("");
   const [pmids, setPmids] = useState("");
   const [csvText, setCsvText] = useState("pmid,title,abstract,journal\n");
-  const [msg, setMsg] = useState("");
   const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
-  const [searchDays, setSearchDays] = useState(30);
-  const [maxFetch, setMaxFetch] = useState(20);
-  const [selectedStringId, setSelectedStringId] = useState<number | "">("");
-  const [queryDraft, setQueryDraft] = useState<string>("");
-  const [searchProductId, setSearchProductId] = useState<number | "">("");
-  const [queryNotes, setQueryNotes] = useState("Live pilot search string");
 
-  async function refresh() {
+  const load = useCallback(async () => {
+    setError("");
     try {
-      const [p, s, r, ex, th, u] = await Promise.all([
+      const [productRows, config, exportRows] = await Promise.all([
         api.products(),
-        api.searchStrings(),
-        api.searchRuns(),
-        api.exports(),
         api.thresholds(),
-        api.users(),
+        api.exports(),
       ]);
-      setProducts(p);
-      setStrings(s);
-      setRuns(r);
-      setExports(ex);
-      setThresholds(th);
-      setUsers(u);
-      const preferred = p[0];
-      if (searchProductId === "" && preferred) {
-        setSearchProductId(preferred.id);
-      }
-      // Prefer active string for selected product, else newest
-      if (selectedStringId === "" && s.length) {
-        const pid = preferred?.id;
-        const active =
-          s.find((x) => x.product_id === pid && x.is_active) ||
-          s.find((x) => x.is_active) ||
-          s[0];
-        if (active) {
-          setSelectedStringId(active.id);
-          setQueryDraft(active.query_text);
-        }
-      }
-    } catch (e) {
-      setError(String(e));
+      setProducts(productRows);
+      setThresholds(config);
+      setExports(exportRows);
+      setProductId((current) => current || productRows[0]?.id || "");
+    } catch (caught) {
+      setError(String(caught));
     }
-  }
-
-  useEffect(() => {
-    refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const productId =
-    typeof searchProductId === "number"
-      ? searchProductId
-      : products[0]?.id;
-  const activeStringId =
-    typeof selectedStringId === "number"
-      ? selectedStringId
-      : strings.find((s) => s.is_active)?.id || strings[0]?.id;
+  useEffect(() => {
+    load();
+  }, [load]);
 
-  async function wrap(fn: () => Promise<void>) {
+  async function run(action: () => Promise<void>) {
     setBusy(true);
     setError("");
-    setMsg("");
+    setMessage("");
     try {
-      await fn();
-      await refresh();
-    } catch (e) {
-      setError(String(e));
+      await action();
+      await load();
+    } catch (caught) {
+      setError(String(caught));
     } finally {
       setBusy(false);
     }
   }
 
-  const llmMode = thresholds?.llm_mode || (thresholds?.llm_mock ? "mock" : "live");
-
   return (
     <div>
-      <div className="page-head">
-        <div>
-          <h1>Admin / PV Lead</h1>
-          <p className="muted">
-            Search, import, evaluation, exports — Phase B/E pilot operations
-          </p>
-        </div>
+      <div className="shd">
+        <span className="eyebrow">Pilot administration</span>
+        <h1>Admin tools</h1>
+        <p className="sub">
+          Runtime inspection, controlled imports, evaluation, and legacy pilot
+          exports. Product, source, and schedule configuration now live on their own screens.
+        </p>
       </div>
-
-      {msg && <div className="ok-banner">{msg}</div>}
-      {error && <div className="error">{error}</div>}
+      {message ? <div className="ok-banner">{message}</div> : null}
+      {error ? <div className="error">{error}</div> : null}
 
       <section className="card">
-        <h2>Runtime config (read-only)</h2>
-        <p className="muted">
-          Env-driven; change <code>.env</code> and restart API to switch modes.
-          LLM errors <strong>fail open</strong> to heuristic scoring with an
-          audit flag (articles are never dropped for model outages).
-        </p>
+        <h2>Runtime configuration</h2>
         {thresholds ? (
           <div className="stat-row">
-            <div className={`stat ${llmMode === "live" ? "ok" : ""}`}>
-              <span>LLM mode</span>
-              <strong>
-                {llmMode === "live"
-                  ? "LIVE"
-                  : llmMode === "mock_no_key"
-                    ? "MOCK (no key)"
-                    : "MOCK"}
-              </strong>
-              <small className="muted">
-                LLM_MOCK={String(thresholds.llm_mock)} · key=
-                {thresholds.llm_api_key_configured ? "set" : "missing"}
-              </small>
-            </div>
-            <div className="stat">
-              <span>Model</span>
-              <strong className="clip-strong">{thresholds.llm_model}</strong>
-              <small className="muted">{thresholds.llm_base_url || "—"}</small>
-            </div>
-            <div
-              className={`stat ${
-                thresholds.ncbi_email_configured ? "ok" : ""
-              }`}
-            >
-              <span>PubMed NCBI</span>
-              <strong>
-                {thresholds.ncbi_email_configured ? "email OK" : "set NCBI_EMAIL"}
-              </strong>
-              <small className="muted">
-                API key={thresholds.ncbi_api_key_configured ? "set" : "optional"}
-              </small>
-            </div>
-            <div className="stat">
-              <span>Fail-open</span>
-              <strong>
-                {thresholds.fail_open_on_llm_error !== false ? "ON" : "OFF"}
-              </strong>
-              <small className="muted">heuristic on LLM error</small>
-            </div>
+            <div className="stat"><span>LLM mode</span><strong>{thresholds.llm_mode || (thresholds.llm_mock ? "mock" : "live")}</strong><small>{thresholds.llm_model}</small></div>
+            <div className="stat"><span>Fail-open</span><strong>{thresholds.fail_open_on_llm_error === false ? "OFF" : "ON"}</strong><small>heuristic fallback</small></div>
+            <div className="stat"><span>PubMed</span><strong>{thresholds.ncbi_email_configured ? "Configured" : "Needs email"}</strong><small>NCBI E-utilities</small></div>
+            <div className="stat"><span>Versions</span><strong>{thresholds.prompt_version}</strong><small>{thresholds.ruleset_version} · {thresholds.threshold_version}</small></div>
           </div>
-        ) : (
-          <p className="muted">Loading config…</p>
-        )}
+        ) : <p className="muted">Loading configuration…</p>}
       </section>
 
       <section className="card">
-        <h2>Pipeline actions</h2>
+        <h2>Controlled article imports</h2>
+        <label>Product<select value={productId} onChange={(event) => setProductId(Number(event.target.value) || "")}><option value="">Select product</option>{products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}</select></label>
+        <div className="grid-2">
+          <div>
+            <label>PMIDs<textarea rows={6} value={pmids} onChange={(event) => setPmids(event.target.value)} placeholder="One PMID per line" /></label>
+            <button className="btn" disabled={busy || !productId || !pmids.trim()} onClick={() => run(async () => { await api.importPmids(Number(productId), pmids); setMessage("PMID import completed."); })}>Import PMIDs</button>
+          </div>
+          <div>
+            <label>CSV<textarea rows={6} value={csvText} onChange={(event) => setCsvText(event.target.value)} /></label>
+            <button className="btn" disabled={busy || !productId || !csvText.trim()} onClick={() => run(async () => { await api.importCsv(Number(productId), csvText, true); setMessage("CSV import completed."); })}>Import CSV</button>
+          </div>
+        </div>
+      </section>
+
+      <section className="card">
+        <h2>Evaluation and legacy pilot exports</h2>
         <div className="row-actions wrap">
-          <button
-            className="btn"
-            disabled={busy}
-            onClick={() =>
-              wrap(async () => {
-                const exp = await api.exportIcsr();
-                setMsg(
-                  `ICSR export #${exp.id}: ${exp.record_count} record(s)`
-                );
-              })
-            }
-          >
-            Export ICSRs
-          </button>
-          <button
-            className="btn"
-            disabled={busy}
-            onClick={() =>
-              wrap(async () => {
-                const exp = await api.exportCdscoXml();
-                setExports(await api.exports());
-                setMsg(
-                  `CDSCO E2B(R2) XML export #${exp.id}: ${exp.record_count} safety report(s) — pilot output, not a validated submission`
-                );
-              })
-            }
-          >
-            Export CDSCO XML
-          </button>
-          <button
-            className="btn"
-            disabled={busy}
-            onClick={() =>
-              wrap(async () => {
-                const exp = await api.exportParallel(productId);
-                setMsg(
-                  `Parallel-run export #${exp.id}: ${exp.record_count} rows (fill manual columns offline)`
-                );
-              })
-            }
-          >
-            Export parallel-run
-          </button>
-          <button
-            className="btn"
-            disabled={busy}
-            onClick={() =>
-              wrap(async () => {
-                const r = await api.evaluation();
-                setEvalResult(r);
-                setMsg(
-                  `Evaluation: sensitivity=${r.sensitivity} (TP=${r.tp} FN=${r.fn} FP=${r.fp} TN=${r.tn})`
-                );
-              })
-            }
-          >
-            Run gold evaluation
-          </button>
+          <button className="btn" disabled={busy} onClick={() => run(async () => { const result = await api.evaluation(); setEvaluation(result); setMessage("Gold-label evaluation completed."); })}>Run evaluation</button>
+          <button className="btn" disabled={busy} onClick={() => run(async () => { await api.exportIcsr(); setMessage("ICSR handoff package generated."); })}>Generate ICSR handoff</button>
+          <button className="btn" disabled={busy || !productId} onClick={() => run(async () => { await api.exportParallel(Number(productId)); setMessage("Parallel-run package generated."); })}>Generate parallel-run package</button>
         </div>
+        {evaluation ? <p className="ok-banner">Sensitivity {String(evaluation.sensitivity ?? "—")} · Specificity {String(evaluation.specificity ?? "—")} · TP {evaluation.tp} · FN {evaluation.fn}</p> : null}
       </section>
-
-      <section className="card">
-        <h2>PubMed search string (editable)</h2>
-        <p className="muted">
-          Adding a product under Product Search generates a starter query. Edit
-          it below, save a new version, then run search. Saving creates a
-          versioned string (old ones stay for audit).
-        </p>
-        {!thresholds?.ncbi_email_configured && (
-          <div className="warn-banner">
-            <code>NCBI_EMAIL</code> looks unset or still a placeholder. Live
-            searches may be rate-limited or rejected.
-          </div>
-        )}
-        <div className="form-grid">
-          <label>
-            Product (articles will be filed under this)
-            <select
-              value={productId ?? ""}
-              onChange={(e) =>
-                setSearchProductId(
-                  e.target.value ? Number(e.target.value) : ""
-                )
-              }
-            >
-              {products.length === 0 && <option value="">None</option>}
-              {products.map((p) => (
-                <option key={p.id} value={p.id}>
-                  #{p.id} {p.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Notes (optional)
-            <input
-              value={queryNotes}
-              onChange={(e) => setQueryNotes(e.target.value)}
-              placeholder="Why this string"
-            />
-          </label>
-        </div>
-        <label>
-          PubMed query (ESearch term)
-          <textarea
-            rows={4}
-            value={queryDraft}
-            onChange={(e) => setQueryDraft(e.target.value)}
-            placeholder='(ibuprofen) AND (adverse OR "case report")'
-            spellCheck={false}
-          />
-        </label>
-        <div className="row-actions wrap">
-          <button
-            className="btn primary"
-            disabled={busy || !productId || !queryDraft.trim()}
-            onClick={() =>
-              wrap(async () => {
-                const created = await api.createSearchString({
-                  product_id: productId!,
-                  query_text: queryDraft.trim(),
-                  notes: queryNotes || undefined,
-                });
-                setSelectedStringId(created.id);
-                setMsg(
-                  `Saved search string #${created.id} (v${created.version}) as active for product ${created.product_id}`
-                );
-              })
-            }
-          >
-            Save as new active search string
-          </button>
-          <button
-            className="btn"
-            type="button"
-            disabled={!queryDraft.trim()}
-            onClick={() =>
-              setQueryDraft(
-                strings.find((s) => s.id === activeStringId)?.query_text ||
-                  queryDraft
-              )
-            }
-          >
-            Reset draft from selected version
-          </button>
-        </div>
-      </section>
-
-      <section className="card">
-        <h2>Run PubMed search (live E-utilities)</h2>
-        <p className="muted">
-          Uses NCBI ESearch → EFetch only (no HTML scraping). Pick a saved
-          version, date window, then run.
-        </p>
-        <div className="form-grid">
-          <label>
-            Saved search string
-            <select
-              value={activeStringId ?? ""}
-              onChange={(e) => {
-                const id = e.target.value ? Number(e.target.value) : "";
-                setSelectedStringId(id);
-                if (typeof id === "number") {
-                  const s = strings.find((x) => x.id === id);
-                  if (s) setQueryDraft(s.query_text);
-                }
-              }}
-            >
-              {strings.length === 0 && (
-                <option value="">Save a query above first</option>
-              )}
-              {strings.map((s) => (
-                <option key={s.id} value={s.id}>
-                  #{s.id} · product {s.product_id} · v{s.version}
-                  {s.is_active ? " · ACTIVE" : ""}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Date window
-            <div className="row-actions wrap" style={{ marginTop: 4 }}>
-              {DATE_PRESETS.map((p) => (
-                <button
-                  key={p.days}
-                  type="button"
-                  className={`btn ${searchDays === p.days ? "primary" : ""}`}
-                  onClick={() => setSearchDays(p.days)}
-                >
-                  {p.label}
-                </button>
-              ))}
-            </div>
-          </label>
-          <label>
-            Max fetch
-            <input
-              type="number"
-              min={1}
-              max={200}
-              value={maxFetch}
-              onChange={(e) => setMaxFetch(Number(e.target.value) || 20)}
-            />
-          </label>
-        </div>
-        {activeStringId && (
-          <pre className="code-block" style={{ marginTop: "0.75rem" }}>
-            {strings.find((s) => s.id === activeStringId)?.query_text ||
-              queryDraft}
-          </pre>
-        )}
-        <div className="row-actions wrap" style={{ marginTop: "0.75rem" }}>
-          <button
-            className="btn primary"
-            disabled={busy || !activeStringId}
-            onClick={() =>
-              wrap(async () => {
-                setMsg(
-                  `Calling NCBI PubMed E-utilities (last ${searchDays} days)…`
-                );
-                const run = (await api.runSearch(activeStringId!, {
-                  max_fetch: maxFetch,
-                  days: searchDays,
-                })) as Record<string, unknown>;
-                if (String(run.status) === "failed") {
-                  setError(
-                    `Search #${run.id} failed: ${run.error_message || "unknown"}`
-                  );
-                } else {
-                  setMsg(
-                    `Search #${run.id}: ${run.status}, hits=${run.hit_count}, new=${run.new_article_count}, rehit=${run.rehit_count}`
-                  );
-                }
-              })
-            }
-          >
-            Run PubMed search ({searchDays}d)
-          </button>
-          <button
-            className="btn"
-            disabled={busy || !productId || !queryDraft.trim()}
-            title="Save draft then run in one click"
-            onClick={() =>
-              wrap(async () => {
-                const created = await api.createSearchString({
-                  product_id: productId!,
-                  query_text: queryDraft.trim(),
-                  notes: queryNotes || "Saved on run",
-                });
-                setSelectedStringId(created.id);
-                setMsg(
-                  `Saved #${created.id}, calling PubMed (last ${searchDays} days)…`
-                );
-                const run = (await api.runSearch(created.id, {
-                  max_fetch: maxFetch,
-                  days: searchDays,
-                })) as Record<string, unknown>;
-                if (String(run.status) === "failed") {
-                  setError(
-                    `Search #${run.id} failed: ${run.error_message || "unknown"}`
-                  );
-                } else {
-                  setMsg(
-                    `Saved string #${created.id} → Search #${run.id}: ${run.status}, hits=${run.hit_count}, new=${run.new_article_count}`
-                  );
-                }
-              })
-            }
-          >
-            Save query &amp; run ({searchDays}d)
-          </button>
-        </div>
-        <p className="hint">
-          Tip: use the ibuprofen example + 30 days to see real hits. Demo seed
-          data is available when live PubMed is not configured.
-        </p>
-      </section>
-
-      <section className="card">
-        <h2>Import PMIDs (PubMed EFetch)</h2>
-        <p className="muted">
-          Backup path if search fails — paste PMIDs, fetch details via API, score
-          &amp; route.
-        </p>
-        <textarea
-          rows={3}
-          value={pmids}
-          onChange={(e) => setPmids(e.target.value)}
-          placeholder="12345678, 23456789"
-        />
-        <button
-          className="btn"
-          disabled={busy || !productId || !pmids.trim()}
-          onClick={() =>
-            wrap(async () => {
-              const res = (await api.importPmids(
-                productId!,
-                pmids
-              )) as Record<string, unknown>;
-              setMsg(
-                `PMID import: created=${res.created}, already_known=${res.already_known}`
-              );
-            })
-          }
-        >
-          Import PMIDs
-        </button>
-      </section>
-
-      <section className="card">
-        <h2>Import CSV</h2>
-        <p className="muted">
-          Columns: <code>pmid</code> (required), title, abstract, journal, doi,
-          pub_date. Offline-friendly when title/abstract provided.
-        </p>
-        <textarea
-          rows={5}
-          value={csvText}
-          onChange={(e) => setCsvText(e.target.value)}
-        />
-        <button
-          className="btn"
-          disabled={busy || !productId}
-          onClick={() =>
-            wrap(async () => {
-              const res = (await api.importCsv(
-                productId!,
-                csvText,
-                false
-              )) as Record<string, unknown>;
-              setMsg(
-                `CSV import: created=${res.created}, skipped=${res.skipped_existing}`
-              );
-            })
-          }
-        >
-          Import CSV (no live fetch)
-        </button>
-      </section>
-
-      {evalResult && (
-        <section className="card">
-          <h2>Evaluation results (primary KPI: sensitivity)</h2>
-          <div className="stat-row">
-            <div className="stat ok">
-              <span>Sensitivity</span>
-              <strong>
-                {evalResult.sensitivity != null
-                  ? (evalResult.sensitivity * 100).toFixed(1) + "%"
-                  : "—"}
-              </strong>
-            </div>
-            <div className="stat">
-              <span>Specificity</span>
-              <strong>
-                {evalResult.specificity != null
-                  ? (evalResult.specificity * 100).toFixed(1) + "%"
-                  : "—"}
-              </strong>
-            </div>
-            <div className="stat">
-              <span>TP / FN</span>
-              <strong>
-                {evalResult.tp} / {evalResult.fn}
-              </strong>
-            </div>
-            <div className="stat">
-              <span>FP / TN</span>
-              <strong>
-                {evalResult.fp} / {evalResult.tn}
-              </strong>
-            </div>
-          </div>
-          {evalResult.missed_cases?.length > 0 && (
-            <>
-              <h3>Missed cases (FN)</h3>
-              <ul>
-                {evalResult.missed_cases.map((m) => (
-                  <li key={String(m.id)}>
-                    {String(m.id)}: {String(m.title)}
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
-        </section>
-      )}
-
-      {thresholds && (
-        <section className="card">
-          <h2>Threshold / model versions</h2>
-          <p className="muted">
-            prompt={String(thresholds.prompt_version)} · ruleset=
-            {String(thresholds.ruleset_version)} · threshold=
-            {String(thresholds.threshold_version)} · QC sample=
-            {String(thresholds.auto_clear_qc_sample_rate)}
-          </p>
-          <pre className="code-block">
-            {JSON.stringify(thresholds.bands, null, 2)}
-          </pre>
-        </section>
-      )}
 
       <section className="card">
         <h2>Export packages</h2>
-        {exports.length === 0 ? (
-          <p className="muted">None yet</p>
-        ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>File</th>
-                <th>Records</th>
-                <th>Download</th>
-              </tr>
-            </thead>
-            <tbody>
-              {exports.map((ex) => (
-                <tr key={String(ex.id)}>
-                  <td>{String(ex.id)}</td>
-                  <td>{String(ex.filename)}</td>
-                  <td>{String(ex.record_count)}</td>
-                  <td className="row-actions">
-                    <button
-                      className="btn"
-                      onClick={() => api.downloadExport(Number(ex.id), "json")}
-                    >
-                      JSON
-                    </button>
-                    <button
-                      className="btn"
-                      onClick={() => api.downloadExport(Number(ex.id), "csv")}
-                    >
-                      CSV
-                    </button>
-                    {String(ex.filename).endsWith(".xml") && (
-                      <a
-                        className="btn"
-                        href={api.downloadCdscoXmlUrl(Number(ex.id))}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        XML
-                      </a>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </section>
-
-      <section className="card">
-        <h2>Product assignment</h2>
-        <p className="muted">
-          New reviewable literature is automatically assigned to the product's primary reviewer.
-        </p>
-        <div className="product-assignment-list">
-          {products.map((p) => (
-            <div className="product-assignment-row" key={p.id}>
-              <div>
-                <strong>{p.name}</strong>
-                <div className="api-tag-row">
-                  <span className="muted">APIs:</span>
-                  {(p.active_ingredients || []).length === 0 ? (
-                    <span className="muted">none tagged</span>
-                  ) : (
-                    (p.active_ingredients || []).map((ai) => (
-                      <span
-                        className="api-tag"
-                        key={ai.id}
-                        title={
-                          `Active Pharmaceutical Ingredient` +
-                          (ai.atc_code ? ` · ATC ${ai.atc_code}` : "") +
-                          (ai.inn ? ` · INN ${ai.inn}` : "")
-                        }
-                      >
-                        {ai.name}
-                        {ai.atc_code ? (
-                          <span className="api-tag-atc">{ai.atc_code}</span>
-                        ) : null}
-                      </span>
-                    ))
-                  )}
-                </div>
-                <div className="muted">
-                  synonyms: {(p.synonyms || []).join(", ") || "none"}
-                </div>
-              </div>
-              <select
-                value={p.primary_reviewer_id || ""}
-                onChange={(e) => {
-                  const primary_reviewer_id = e.target.value
-                    ? Number(e.target.value)
-                    : null;
-                  wrap(async () => {
-                    await api.updateProduct(p.id, { primary_reviewer_id });
-                    setMsg(`Primary reviewer updated for ${p.name}`);
-                  });
-                }}
-              >
-                <option value="">Unassigned</option>
-                {users.map((user) => (
-                  <option value={user.id} key={user.id}>
-                    {user.full_name} ({user.role})
-                  </option>
-                ))}
-              </select>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section className="card">
-        <h2>Search string history</h2>
-        {strings.length === 0 ? (
-          <p className="muted">None yet — create one above.</p>
-        ) : (
-          strings.map((s) => (
-            <div key={s.id} className="code-block">
-              <div className="muted">
-                id={s.id} · product={s.product_id} · v{s.version}
-                {s.is_active ? " · ACTIVE" : ""}
-                {" · "}
-                <button
-                  type="button"
-                  className="btn"
-                  style={{ padding: "0.15rem 0.5rem", fontSize: "0.8rem" }}
-                  onClick={() => {
-                    setSelectedStringId(s.id);
-                    setQueryDraft(s.query_text);
-                    setSearchProductId(s.product_id);
-                    setMsg(`Loaded string #${s.id} into editor`);
-                  }}
-                >
-                  Load into editor
-                </button>
-              </div>
-              <code>{s.query_text}</code>
-            </div>
-          ))
-        )}
-      </section>
-
-      <section className="card">
-        <h2>Recent search runs</h2>
-        {runs.length === 0 ? (
-          <p className="muted">No runs yet</p>
-        ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>Status</th>
-                <th>Window</th>
-                <th>Hits</th>
-                <th>New</th>
-                <th>By</th>
-                <th>Error</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {runs.map((r) => (
-                <tr key={String(r.id)}>
-                  <td>
-                    <Link to={`/search-runs/${r.id}`}>{String(r.id)}</Link>
-                  </td>
-                  <td>
-                    <span
-                      className={
-                        r.status === "failed"
-                          ? "pill danger"
-                          : r.status === "completed"
-                            ? "pill ok"
-                            : "pill"
-                      }
-                    >
-                      {String(r.status)}
-                    </span>
-                  </td>
-                  <td className="muted">
-                    {r.date_from ? String(r.date_from) : "—"} →{" "}
-                    {r.date_to ? String(r.date_to) : "—"}
-                  </td>
-                  <td>{String(r.hit_count)}</td>
-                  <td>{String(r.new_article_count)}</td>
-                  <td>{String(r.triggered_by || "")}</td>
-                  <td className="clip">
-                    {r.error_message ? String(r.error_message) : ""}
-                  </td>
-                  <td className="row-actions">
-                    <Link className="btn" to={`/search-runs/${r.id}`}>
-                      Detail
-                    </Link>
-                    {(r.status === "failed" || r.status === "completed") && (
-                      <button
-                        className="btn"
-                        disabled={busy}
-                        onClick={() =>
-                          wrap(async () => {
-                            const next = await api.retrySearchRun(
-                              Number(r.id)
-                            );
-                            setMsg(
-                              `Retry of #${r.id} → new run #${next.id} (${next.status})`
-                            );
-                            if (next.status === "failed") {
-                              setError(
-                                String(next.error_message || "Retry failed")
-                              );
-                            }
-                          })
-                        }
-                      >
-                        Retry
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        {exports.length === 0 ? <p className="muted">No export packages yet.</p> : (
+          <table className="table"><thead><tr><th>File</th><th>Records</th><th>Created</th><th /></tr></thead><tbody>{exports.map((item) => <tr key={String(item.id)}><td>{String(item.filename || "—")}</td><td>{String(item.record_count ?? "—")}</td><td>{item.created_at ? new Date(String(item.created_at)).toLocaleString() : "—"}</td><td><button className="btn ghost" onClick={() => api.downloadExport(Number(item.id), "json")}>Download JSON</button></td></tr>)}</tbody></table>
         )}
       </section>
     </div>

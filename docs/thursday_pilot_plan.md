@@ -1,4 +1,10 @@
-# Thursday pilot completion plan
+# Thursday pilot completion plan — historical snapshot
+
+> **Superseded for the current partner-feedback MVP.** This document records
+> the 6 August assignment-routing demo plan. For the current implemented scope,
+> read [MVP_BUILD_BRIEF.md](MVP_BUILD_BRIEF.md), [AGENTS.md](AGENTS.md), and the
+> user-owned [phase3_4_manual_test.md](phase3_4_manual_test.md). Do not treat
+> the dated actions or seeded product examples below as current pilot data.
 
 Target demo: Thursday, 6 August 2026.
 

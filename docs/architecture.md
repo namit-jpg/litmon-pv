@@ -1,16 +1,16 @@
-# Architecture (Phase 1 Pilot)
+# Architecture (partner-feedback MVP)
 
 ## Pipeline
 
 ```text
 ┌─────────────┐   ┌──────────────┐   ┌────────────────┐   ┌─────────────┐
-│ 1. Search   │──▶│ 2. Ingest &  │──▶│ 3. AI Screen   │──▶│ 4. Triage   │
-│ PubMed API  │   │ Dedup PMID   │   │ Score+explain  │   │ Rules+SLA   │
+│ 1. Search   │──▶│ 2. Ingest &  │──▶│ 3. AI Screen   │──▶│ 4. Workflow │
+│ PubMed API  │   │ Dedup PMID   │   │ Score+explain  │   │ + alerts    │
 └─────────────┘   └──────────────┘   └────────────────┘   └──────┬──────┘
                                                                   │
                     ┌──────────────┐   ┌────────────────┐         │
-                    │ 6. Export    │◀──│ 5. Reviewer    │◀────────┘
-                    │ JSON/CSV     │   │ Human decision │
+                    │ 6. Regulatory│◀──│ 5. Reviewer    │◀────────┘
+                    │ output/store │   │ Human decision │
                     └──────────────┘   └────────────────┘
 ```
 
@@ -21,19 +21,19 @@ Nothing is discarded silently. Auto-Clear is logged and 10% QC sampled; archive 
 | Component | Path | Role |
 |-----------|------|------|
 | API gateway | `app/main.py`, `app/api/routes.py` | REST, auth, CORS |
-| Search orchestrator | `services/pipeline.py` + `pubmed/` | Scheduled/manual PubMed runs |
+| Search orchestrator | `services/pipeline.py` + `pubmed/` | Manual and recurring PubMed runs |
 | AI screening | `services/ai/scorer.py` | Mock heuristic or LLM JSON |
 | Triage engine | `services/triage/engine.py` | Bands + hard rules |
 | Jobs worker | `services/jobs.py` | In-process asyncio queue |
-| Notifications | `services/notifications.py` | Log + optional SMTP |
-| Reviewer UI | `apps/web` | Queues, article, admin, ops |
+| Alerts and schedules | `services/triggers.py`, `services/schedules.py` | Persistent in-app alerts; recurring searches and time-driven checks |
+| Reviewer UI | `apps/web` | Dashboard, workspace, detection report, alerts, submission/storage, administration and ops |
 
 ## Data store
 
-- Default: **SQLite** file `apps/api/litmon.db` (local pilot)  
-- Optional: **PostgreSQL** via `DATABASE_URL`  
-- Tables created on startup / bootstrap (`Base.metadata.create_all`)  
-- Core entities: Product, SearchString, SearchRun, Article, ScreeningResult, TriageAssignment, ReviewDecision, ExportPackage, AuditEvent, Job, User  
+- Default: **SQLite** file `apps/api/litmon.db` (local pilot)
+- Optional: **PostgreSQL** via `DATABASE_URL`
+- Schema maintained with Alembic migrations at API startup / bootstrap
+- Core entities: Product, LiteratureSource, SearchString, SearchSchedule, SearchRun, Article, ScreeningResult, TriageAssignment, ReviewDecision, RegulatoryRecord, Alert, ExportPackage, AuditEvent, Job, User
 
 ## Auth & roles
 
@@ -65,6 +65,7 @@ Each score stores reason tags + model/prompt/ruleset/threshold versions.
 
 ## Deployment (pilot)
 
-Local: API :8000 + Vite :5173.  
-Optional: `docker compose` for Postgres/Redis only.  
-No production container image is mandated yet.
+Local pilot: API :8000 + Vite :5173.
+PostgreSQL is supported through `DATABASE_URL`; provision it separately for a
+shared environment. This repository does **not** currently include Docker
+Compose, a container image, CI, or a production scheduler deployment.

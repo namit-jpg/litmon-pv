@@ -1,18 +1,22 @@
-import { useEffect, useState } from "react";
-import { Link, Navigate, Route, Routes, useNavigate } from "react-router-dom";
+import { useCallback, useEffect, useState } from "react";
+import { Link, Navigate, NavLink, Route, Routes, useNavigate } from "react-router-dom";
 import { useAuth } from "./auth";
 import { api, Presence } from "./api";
 import LoginPage from "./pages/LoginPage";
-import QueuePage from "./pages/QueuePage";
-import ArticlePage from "./pages/ArticlePage";
+import WorkspacePage from "./pages/WorkspacePage";
+import DetectionReportPage from "./pages/DetectionReportPage";
 import AdminPage from "./pages/AdminPage";
 import ArchivePage from "./pages/ArchivePage";
 import AuditPage from "./pages/AuditPage";
 import OpsPage from "./pages/OpsPage";
 import SearchRunPage from "./pages/SearchRunPage";
 import DashboardPage from "./pages/DashboardPage";
+import AlertsPage from "./pages/AlertsPage";
+import SubmissionPage from "./pages/SubmissionPage";
+import ProductsPage from "./pages/ProductsPage";
+import SourcesPage from "./pages/SourcesPage";
+import SchedulePage from "./pages/SchedulePage";
 import ProductSearchPage from "./pages/ProductSearchPage";
-import AlertsBar from "./components/AlertsBar";
 
 /** Operations surfaces. Reviewers work the queue; they do not run the system. */
 const OPS_ROLES = ["pv_lead", "admin"];
@@ -61,6 +65,86 @@ function PresenceControl() {
   );
 }
 
+type RailCounts = { work: number; alerts: number };
+
+/** Left rail. Groups follow the wireframe: Monitor, Regulatory, Configure. */
+function Rail({ role }: { role?: string }) {
+  const [counts, setCounts] = useState<RailCounts>({ work: 0, alerts: 0 });
+
+  const load = useCallback(async () => {
+    try {
+      const [folders, alerts] = await Promise.all([
+        api.workspaceFolders({ mine_only: true }),
+        api.alerts({ unread_only: true }),
+      ]);
+      // "Work" is everything still needing this reviewer, which is the open
+      // folders rather than the whole queue — a count including Archived
+      // would never go down and would stop meaning anything.
+      const open = new Set([
+        "new_alerts",
+        "awaiting_review",
+        "under_assessment",
+        "exceptions",
+      ]);
+      setCounts({
+        work: folders.folders
+          .filter((f) => open.has(f.key))
+          .reduce((total, f) => total + f.count, 0),
+        alerts: alerts.length,
+      });
+    } catch {
+      // A failed count must not blank the navigation.
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+    const timer = window.setInterval(load, 30000);
+    return () => window.clearInterval(timer);
+  }, [load]);
+
+  const link = (to: string, label: string, count?: number, crit?: boolean) => (
+    <NavLink
+      to={to}
+      end={to === "/"}
+      className={({ isActive }) => `rail-link${isActive ? " is-active" : ""}`}
+    >
+      {label}
+      {count ? <span className={`ct${crit ? " crit" : ""}`}>{count}</span> : null}
+    </NavLink>
+  );
+
+  return (
+    <nav className="rail" aria-label="Main">
+      <div className="rail-tenant">
+        <span className="lbl">Client</span>
+        <div className="val">
+          <span>LitMon-PV pilot</span>
+          <i>{role?.replace("_", " ")}</i>
+        </div>
+      </div>
+
+      <div className="rail-group">Monitor</div>
+      {link("/dashboard", "Dashboard")}
+      {link("/", "My workspace", counts.work, counts.work > 0)}
+      {link("/alerts", "Alerts", counts.alerts, counts.alerts > 0)}
+      {link("/archive", "Archive")}
+
+      <div className="rail-group">Regulatory</div>
+      {link("/submission", "Submission & storage")}
+      {canSeeOps(role) ? link("/audit", "Audit trail") : null}
+
+      <div className="rail-group">Configure</div>
+      {link("/product-search", "Product search")}
+      {canSeeOps(role) ? link("/products", "Products") : null}
+      {canSeeOps(role) ? link("/sources", "Literature sources") : null}
+      {canSeeOps(role) ? link("/schedule", "Search & schedule") : null}
+      {canSeeOps(role) ? link("/ops", "Ops") : null}
+      {canSeeOps(role) ? link("/admin", "Pilot tools") : null}
+    </nav>
+  );
+}
+
 function Shell({ children }: { children: React.ReactNode }) {
   const { user, logout } = useAuth();
   const nav = useNavigate();
@@ -68,23 +152,9 @@ function Shell({ children }: { children: React.ReactNode }) {
     <div className="app">
       <header className="topbar">
         <div className="brand">
-          <Link to="/">LitMon-PV</Link>
+          <Link to="/dashboard">LitMon-PV</Link>
           <span className="badge">Pilot — not GxP validated</span>
         </div>
-        <nav>
-          <Link to="/dashboard">Dashboard</Link>
-          <Link to="/?tab=all">My Work</Link>
-          <Link to="/product-search">Product Search</Link>
-          <Link to="/archive">Archive</Link>
-          {canSeeOps(user?.role) && (
-            <>
-              <Link to="/ops">Ops</Link>
-              <Link to="/audit">Audit</Link>
-              <Link to="/admin">Admin</Link>
-            </>
-          )}
-        </nav>
-        <AlertsBar />
         <PresenceControl />
         <div className="userbox">
           <span>
@@ -101,7 +171,10 @@ function Shell({ children }: { children: React.ReactNode }) {
           </button>
         </div>
       </header>
-      <main className="main">{children}</main>
+      <div className="shell">
+        <Rail role={user?.role} />
+        <main className="canvas">{children}</main>
+      </div>
     </div>
   );
 }
@@ -125,78 +198,27 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
-      <Route
-        path="/"
-        element={
-          <Private>
-            <QueuePage />
-          </Private>
-        }
-      />
-      <Route
-        path="/dashboard"
-        element={
-          <Private>
-            <DashboardPage />
-          </Private>
-        }
-      />
-      <Route
-        path="/articles/:id"
-        element={
-          <Private>
-            <ArticlePage />
-          </Private>
-        }
-      />
-      <Route
-        path="/archive"
-        element={
-          <Private>
-            <ArchivePage />
-          </Private>
-        }
-      />
-      <Route
-        path="/product-search"
-        element={
-          <Private>
-            <ProductSearchPage />
-          </Private>
-        }
-      />
-      <Route
-        path="/audit"
-        element={
-          <OpsOnly>
-            <AuditPage />
-          </OpsOnly>
-        }
-      />
-      <Route
-        path="/ops"
-        element={
-          <OpsOnly>
-            <OpsPage />
-          </OpsOnly>
-        }
-      />
-      <Route
-        path="/admin"
-        element={
-          <OpsOnly>
-            <AdminPage />
-          </OpsOnly>
-        }
-      />
-      <Route
-        path="/search-runs/:id"
-        element={
-          <Private>
-            <SearchRunPage />
-          </Private>
-        }
-      />
+
+      {/* Monitor */}
+      <Route path="/" element={<Private><WorkspacePage /></Private>} />
+      <Route path="/dashboard" element={<Private><DashboardPage /></Private>} />
+      <Route path="/alerts" element={<Private><AlertsPage /></Private>} />
+      <Route path="/archive" element={<Private><ArchivePage /></Private>} />
+      <Route path="/articles/:id" element={<Private><DetectionReportPage /></Private>} />
+
+      {/* Regulatory */}
+      <Route path="/submission" element={<Private><SubmissionPage /></Private>} />
+      <Route path="/submission/:id" element={<Private><SubmissionPage /></Private>} />
+      <Route path="/audit" element={<OpsOnly><AuditPage /></OpsOnly>} />
+
+      {/* Configure */}
+      <Route path="/product-search" element={<Private><ProductSearchPage /></Private>} />
+      <Route path="/products" element={<OpsOnly><ProductsPage /></OpsOnly>} />
+      <Route path="/sources" element={<OpsOnly><SourcesPage /></OpsOnly>} />
+      <Route path="/schedule" element={<OpsOnly><SchedulePage /></OpsOnly>} />
+      <Route path="/search-runs/:id" element={<Private><SearchRunPage /></Private>} />
+      <Route path="/ops" element={<OpsOnly><OpsPage /></OpsOnly>} />
+      <Route path="/admin" element={<OpsOnly><AdminPage /></OpsOnly>} />
     </Routes>
   );
 }

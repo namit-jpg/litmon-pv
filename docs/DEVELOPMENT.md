@@ -18,31 +18,30 @@ litmon-pv/
 │   │   └── requirements.txt
 │   └── web/                 # React + Vite + TypeScript
 │       └── src/
-│           ├── pages/       # Queues, Article, Admin, Ops, Archive, Audit
+│           ├── pages/       # Dashboard, Workspace, Detection report, Alerts, Submission, Products, Sources, Schedules, Pilot tools, Audit
 │           ├── api.ts       # fetch client
 │           └── App.tsx      # routes
 ├── data/seed/               # gold_labels.json
 ├── docs/                    # this documentation
 ├── workers/                 # scheduled_search, perf_smoke
-├── .env.example
-└── docker-compose.yml
+└── .env.example
 ```
 
 ## Design principles (do not break)
 
-1. **Human final decision** on anything that could be a reportable case.  
-2. **Never silent-delete** literature hits — archive + audit + recall.  
-3. **Over-flag** rather than under-flag (sensitivity &gt; specificity).  
-4. **Explainability** — scores need reason tags, not black boxes.  
-5. **Version everything that affects routing** — prompt/ruleset/threshold on each score.  
+1. **Human final decision** on anything that could be a reportable case.
+2. **Never silent-delete** literature hits — archive + audit + recall.
+3. **Over-flag** rather than under-flag (sensitivity &gt; specificity).
+4. **Explainability** — scores need reason tags, not black boxes.
+5. **Version everything that affects routing** — prompt/ruleset/threshold on each score.
 6. **Export only** to case systems in pilot (no Argus API).
 
 ## Backend conventions
 
-- Domain logic in `app/services/*`, not fat route handlers.  
-- Append-only screening results (rescore creates new rows).  
-- Every significant action → `log_event(...)`.  
-- PubMed only via `app/services/pubmed/client.py` (no scraping).  
+- Domain logic in `app/services/*`, not fat route handlers.
+- Append-only screening results (rescore creates new rows).
+- Every significant action → `log_event(...)`.
+- PubMed only via `app/services/pubmed/client.py` (no scraping).
 - Jobs via `enqueue_job` (thread-safe for sync routes).
 
 ## Database migrations (Alembic)
@@ -69,9 +68,9 @@ across laptops. `create_all` remains a last-resort fallback if Alembic fails.
 
 ## Frontend conventions
 
-- All HTTP via `src/api.ts`.  
-- Auth token in `localStorage` (`litmon_token`).  
-- Keep article decision path fast (target &lt; 60s for typical review).  
+- All HTTP via `src/api.ts`.
+- Auth token in `localStorage` (`litmon_token`).
+- Keep article decision path fast (target &lt; 60s for typical review).
 - Show AI reasoning on the article side panel always.
 
 ## Running tests
@@ -84,10 +83,13 @@ python -m pytest tests -q
 
 Key suites:
 
-- `test_triage.py` — routing bands / hard rules  
-- `test_pubmed_parse.py` — EFetch XML  
-- `test_evaluation.py` — gold sensitivity  
-- `test_sla.py` — overdue detection  
+- `test_triage.py` — routing bands / hard rules
+- `test_pubmed_parse.py` — EFetch XML
+- `test_evaluation.py` — gold sensitivity
+- `test_sla.py` — overdue detection
+- `test_phase3_api.py` — workspace, alerts, regulatory and exception API paths
+- `test_classification_split.py` — classification, signal-tag and regulatory-decision separation
+- `test_schedules.py` — recurring-search and monitoring-gap behaviour
 
 ## Useful scripts
 
@@ -113,10 +115,10 @@ Open PRs into `main`. Keep commits focused.
 
 ## Secrets checklist before push
 
-- [ ] No `.env`  
-- [ ] No `litmon.db`  
-- [ ] No API keys in source or docs  
-- [ ] Demo passwords only documented as local pilot defaults  
+- [ ] No `.env`
+- [ ] No `litmon.db`
+- [ ] No API keys in source or docs
+- [ ] Demo passwords only documented as local pilot defaults
 
 ## Version stamp
 

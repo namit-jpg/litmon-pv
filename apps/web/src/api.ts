@@ -137,9 +137,14 @@ export type ActiveIngredient = {
 export type Product = {
   id: number;
   name: string;
-  inn?: string;
+  inn?: string | null;
   brands: string[];
   synonyms: string[];
+  atc_code?: string | null;
+  /** Marketing authorisation holder — a licence fact, not a molecule fact. */
+  mah?: string | null;
+  /** ISO country codes the product is sold in. */
+  markets: string[];
   is_active: boolean;
   primary_reviewer_id?: number | null;
   active_ingredients: ActiveIngredient[];
@@ -151,10 +156,220 @@ export type AlertItem = {
   article_id?: number;
   alert_type: string;
   priority: string;
+  channels: string[];
   title: string;
   message: string;
   read_at?: string;
   created_at: string;
+};
+
+export type AlertSettings = {
+  enabled_channels: string[];
+  available_channels: string[];
+  email_configured: boolean;
+};
+
+/** The nine classification values. Order matches the wireframe's picker. */
+export const CLASSIFICATIONS = [
+  "potential_safety_signal",
+  "potentially_relevant",
+  "adverse_event_related",
+  "product_quality_related",
+  "duplicate",
+  "irrelevant",
+  "invalid",
+  "insufficient_information",
+  "requires_human_review",
+] as const;
+export type Classification = (typeof CLASSIFICATIONS)[number];
+
+/** The fourteen signal tags. Multi-select, distinct from classification. */
+export const SIGNAL_TAGS = [
+  "potential_signal",
+  "confirmed_signal",
+  "under_review",
+  "adverse_event",
+  "serious_adverse_event",
+  "product_quality_issue",
+  "lack_of_efficacy",
+  "drug_interaction",
+  "special_situation",
+  "duplicate",
+  "invalid",
+  "not_relevant",
+  "submission_required",
+  "submission_not_required",
+] as const;
+export type SignalTag = (typeof SIGNAL_TAGS)[number];
+
+export type Priority = "p1" | "p2" | "p3";
+export type SubmissionStatus =
+  | "pending_decision"
+  | "approved_for_submission"
+  | "retained_internally"
+  | "submitted";
+
+/** Turn an enum value into the sentence-case label the screens display. */
+export function humanise(value?: string | null): string {
+  if (!value) return "—";
+  const text = value.replace(/_/g, " ");
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+export type WorkspaceFolder = {
+  key: string;
+  label: string;
+  count: number;
+};
+
+/** Every filter the workspace bar exposes. Dashboard tiles emit this shape. */
+export type ArticleFilters = {
+  folder?: string;
+  queue?: string;
+  status?: string;
+  product_id?: number;
+  active_ingredient_id?: number;
+  date_from?: string;
+  date_to?: string;
+  literature_source_id?: number;
+  classification?: string;
+  classification_group?: "relevant";
+  screened_only?: boolean;
+  status_group?: "awaiting_review";
+  priority?: string;
+  submission_status?: string;
+  review_status?: "open" | "closed" | "all";
+  signal_status?: string;
+  assignee_id?: number;
+  assignee_name?: string | null;
+  mine_only?: boolean;
+  overdue_only?: boolean;
+  open_only?: boolean;
+  include_archive?: boolean;
+  q?: string;
+};
+
+export type LiteratureSource = {
+  id: number;
+  name: string;
+  kind: string;
+  provider?: string | null;
+  access_model: string;
+  retrieval?: string | null;
+  coverage?: string | null;
+  is_enabled: boolean;
+  article_count: number;
+};
+
+export type SourceConnection = {
+  source_name: string;
+  contact_email?: string | null;
+  contact_email_configured: boolean;
+  api_key_configured: boolean;
+  api_key_hint?: string | null;
+  rate_limit_per_second: number;
+  retry_policy: string;
+  last_successful_call?: string | null;
+  failures_last_7d: number;
+  is_healthy: boolean;
+};
+
+/** A Step-12 measure, carrying the exact filter the workspace should apply. */
+export type DashboardMetric = {
+  key: string;
+  label: string;
+  count: number;
+  filter: ArticleFilters;
+};
+
+export type DashboardMetrics = {
+  scope: string;
+  metrics: DashboardMetric[];
+  alerts_by_priority: DashboardMetric[];
+  results_by_product: {
+    product_id: number;
+    product_name: string;
+    count: number;
+    filter: ArticleFilters;
+  }[];
+  results_by_ingredient: {
+    active_ingredient_id: number;
+    active_ingredient_name: string;
+    count: number;
+    filter: ArticleFilters;
+  }[];
+  results_by_source: {
+    literature_source_id: number;
+    literature_source_name: string;
+    count: number;
+    filter: ArticleFilters;
+  }[];
+  search_completion_status: {
+    product_id: number;
+    product_name: string;
+    status: string;
+    filter: ArticleFilters;
+  }[];
+};
+
+export type ExceptionSummary = {
+  total: number;
+  notice: string;
+  causes: { cause: string; label: string; count: number; alerted: boolean }[];
+};
+
+export type RegulatoryValidation = {
+  article_id: number;
+  rules_configured: boolean;
+  prototype_notice: string;
+  fields: {
+    field: string;
+    label: string;
+    required: boolean;
+    value: unknown;
+    state: "present" | "missing" | "not_stated";
+  }[];
+  blocking_errors: string[];
+  can_generate: boolean;
+};
+
+export type RegulatoryRecord = {
+  id: number;
+  article_id: number;
+  latest_export_id?: number | null;
+  decision: SubmissionStatus;
+  decision_reason?: string | null;
+  gateway?: string | null;
+  submission_reference?: string | null;
+  acknowledgement?: string | null;
+  submitted_at?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ExportPackage = {
+  id: number;
+  filename: string;
+  record_count: number;
+  article_ids: number[];
+  payload_json: Record<string, unknown>;
+  created_at: string;
+};
+
+export type AuditEvent = {
+  id: number;
+  actor: string;
+  action: string;
+  entity_type: string;
+  entity_id?: string | null;
+  payload: Record<string, unknown>;
+  created_at: string;
+};
+
+export type AuditFacets = {
+  actors: string[];
+  actions: string[];
+  entity_types: string[];
 };
 
 export type DashboardSummary = {
@@ -204,6 +419,14 @@ export type ArticleListItem = {
   assignee_id?: number;
   assignee_name?: string;
   signal_status: string;
+  priority: Priority;
+  ai_classification?: Classification | null;
+  human_classification?: Classification | null;
+  /** Human verdict where one exists, otherwise the AI's proposal. */
+  effective_classification?: Classification | null;
+  signal_tags: string[];
+  literature_source_id?: number | null;
+  literature_source_name?: string | null;
 };
 
 export type ArticleDetail = {
@@ -223,20 +446,45 @@ export type ArticleDetail = {
   product_name?: string;
   active_ingredients: ActiveIngredient[];
   assignee_id?: number;
+  assignee_name?: string | null;
   signal_status: string;
+  priority: Priority;
+  ai_classification?: Classification | null;
+  human_classification?: Classification | null;
+  signal_tags: string[];
+  literature_source_id?: number | null;
+  literature_source_name?: string | null;
+  search_date?: string | null;
+  search_terms?: string | null;
+  submission_status: SubmissionStatus;
   latest_screening?: {
     product_match: number;
     event_relevance: number;
     icsr_criteria_match: number;
     composite: number;
     entities: Record<string, unknown>;
+    /** Step-5 extraction, promoted out of the loose entities blob. */
+    indication?: string | null;
+    dosage?: string | null;
+    outcome?: string | null;
+    seriousness?: string | null;
+    country_of_occurrence?: string | null;
+    reporter_type?: string | null;
+    concomitant_medication?: string | null;
+    article_excerpts: string[];
+    relevance_reason?: string | null;
+    confidence?: number | null;
+    processed_at?: string | null;
     icsr_precheck: Record<string, unknown>;
     reason_tags: { code: string; label: string; confidence: number }[];
     hard_rule_candidates: string[];
     summary_for_reviewer?: string;
     model_id: string;
     prompt_version: string;
+    ruleset_version: string;
+    threshold_version: string;
     is_mock: boolean;
+    created_at: string;
   };
   active_triage?: {
     queue: string;
@@ -316,6 +564,41 @@ function qs(params: Record<string, string | undefined>) {
   return s ? `?${s}` : "";
 }
 
+/** Serialise the workspace filter set.
+ *
+ *  A folder already pins the workflow state, so `open_only` is dropped when
+ *  one is set — otherwise the Archived and Submitted folders would come back
+ *  empty. Booleans are only sent when true, since the API defaults suffice.
+ */
+function articleQs(f?: ArticleFilters): string {
+  if (!f) return "";
+  const num = (v?: number) => (v == null ? undefined : String(v));
+  return qs({
+    folder: f.folder,
+    queue: f.queue,
+    status: f.status,
+    product_id: num(f.product_id),
+    active_ingredient_id: num(f.active_ingredient_id),
+    date_from: f.date_from,
+    date_to: f.date_to,
+    literature_source_id: num(f.literature_source_id),
+    classification: f.classification,
+    classification_group: f.classification_group,
+    screened_only: f.screened_only ? "true" : undefined,
+    status_group: f.status_group,
+    priority: f.priority,
+    submission_status: f.submission_status,
+    review_status: f.review_status,
+    signal_status: f.signal_status,
+    assignee_id: num(f.assignee_id),
+    q: f.q,
+    mine_only: f.mine_only ? "true" : undefined,
+    overdue_only: f.overdue_only ? "true" : undefined,
+    include_archive: f.include_archive ? "true" : undefined,
+    open_only: f.folder ? undefined : f.open_only === false ? "false" : undefined,
+  });
+}
+
 export const api = {
   async login(email: string, password: string) {
     const body = new URLSearchParams();
@@ -339,39 +622,13 @@ export const api = {
     }),
   queueStats: (mineOnly = false) =>
     request<QueueStats>(`/api/queues/stats${mineOnly ? "?mine_only=true" : ""}`),
-  articles: (opts?: {
-    queue?: string;
-    open_only?: boolean;
-    include_archive?: boolean;
-    q?: string;
-    status?: string;
-    product_id?: number;
-    mine_only?: boolean;
-    assignee_id?: number;
-    signal_status?: string;
-    overdue_only?: boolean;
-  }) => {
-    const open =
-      opts?.include_archive
-        ? "false"
-        : opts?.open_only === false
-          ? "false"
-          : "true";
-    return request<ArticleListItem[]>(
-      `/api/articles${qs({
-        queue: opts?.queue,
-        open_only: open,
-        include_archive: opts?.include_archive ? "true" : undefined,
-        q: opts?.q,
-        status: opts?.status,
-        product_id: opts?.product_id ? String(opts.product_id) : undefined,
-        mine_only: opts?.mine_only ? "true" : undefined,
-        assignee_id: opts?.assignee_id ? String(opts.assignee_id) : undefined,
-        signal_status: opts?.signal_status,
-        overdue_only: opts?.overdue_only ? "true" : undefined,
-      })}`
-    );
-  },
+  articles: (opts?: ArticleFilters) =>
+    request<ArticleListItem[]>(`/api/articles${articleQs(opts)}`),
+  /** The nine workflow folders with counts under the current filters. */
+  workspaceFolders: (opts?: ArticleFilters) =>
+    request<{ scope: string; folders: WorkspaceFolder[] }>(
+      `/api/workspace/folders${articleQs(opts)}`
+    ),
   article: (id: number) => request<ArticleDetail>(`/api/articles/${id}`),
   claim: (id: number) =>
     request(`/api/articles/${id}/claim`, { method: "POST" }),
@@ -388,7 +645,10 @@ export const api = {
       body: JSON.stringify({ rationale }),
     }),
   products: () => request<Product[]>("/api/products"),
-  updateProduct: (id: number, body: Partial<Product>) =>
+  updateProduct: (
+    id: number,
+    body: Partial<Product> & { active_ingredient_ids?: number[] },
+  ) =>
     request<Product>(`/api/products/${id}`, {
       method: "PATCH",
       body: JSON.stringify(body),
@@ -565,20 +825,178 @@ export const api = {
     request<DashboardSummary>(
       `/api/dashboard/summary${mineOnly ? "?mine_only=true" : ""}`
     ),
-  alerts: (unreadOnly = false) =>
-    request<AlertItem[]>(`/api/alerts${unreadOnly ? "?unread_only=true" : ""}`),
+  dashboardMetrics: (mineOnly = false) =>
+    request<DashboardMetrics>(
+      `/api/dashboard/metrics${mineOnly ? "?mine_only=true" : ""}`
+    ),
+  alerts: (opts?: {
+    unread_only?: boolean;
+    priority?: string;
+    product_id?: number;
+    alert_type?: string;
+    created_from?: string;
+    created_to?: string;
+  }) =>
+    request<AlertItem[]>(
+      `/api/alerts${qs({
+        unread_only: opts?.unread_only ? "true" : undefined,
+        priority: opts?.priority,
+        product_id: opts?.product_id ? String(opts.product_id) : undefined,
+        alert_type: opts?.alert_type,
+        created_from: opts?.created_from,
+        created_to: opts?.created_to,
+      })}`
+    ),
+  alertSettings: () => request<AlertSettings>("/api/alerts/settings"),
   readAlert: (id: number) =>
     request<AlertItem>(`/api/alerts/${id}/read`, { method: "POST" }),
   readAllAlerts: () =>
     request<{ updated: number }>("/api/alerts/read-all", { method: "POST" }),
-  audit: (opts?: { entity_type?: string; entity_id?: string; action?: string }) =>
-    request<Record<string, unknown>[]>(
+
+  // ── Classification and signal tags ──
+  /** Record the human verdict. The AI's proposal is retained separately. */
+  setClassification: (id: number, classification: Classification, rationale?: string) =>
+    request<{
+      article_id: number;
+      ai_classification: string | null;
+      human_classification: string;
+    }>(`/api/articles/${id}/classification`, {
+      method: "PATCH",
+      body: JSON.stringify({ classification, rationale }),
+    }),
+  /** Replace the whole tag set — the panel is a multi-select, not a toggle. */
+  setSignalTags: (id: number, tags: string[]) =>
+    request<{ article_id: number; signal_tags: string[]; signal_status: string }>(
+      `/api/articles/${id}/signal-tags`,
+      { method: "PUT", body: JSON.stringify({ tags }) }
+    ),
+
+  // ── Literature sources ──
+  literatureSources: () => request<LiteratureSource[]>("/api/literature-sources"),
+  createLiteratureSource: (body: Partial<LiteratureSource> & { name: string }) =>
+    request<LiteratureSource>("/api/literature-sources", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  updateLiteratureSource: (id: number, body: Partial<LiteratureSource>) =>
+    request<LiteratureSource>(`/api/literature-sources/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  sourceConnection: () =>
+    request<SourceConnection>("/api/literature-sources/connection"),
+
+  // ── Regulatory (prototype — the app never transmits) ──
+  regulatoryValidate: (articleId: number) =>
+    request<RegulatoryValidation>(
+      `/api/regulatory/articles/${articleId}/validate`
+    ),
+  regulatoryGenerate: (
+    articleId: number,
+    body?: { sender_id?: string; receiver_id?: string }
+  ) =>
+    request<Record<string, unknown>>(
+      `/api/regulatory/articles/${articleId}/generate`,
+      { method: "POST", body: JSON.stringify(body ?? {}) }
+    ),
+  regulatoryVersions: (articleId: number) =>
+    request<ExportPackage[]>(
+      `/api/regulatory/articles/${articleId}/versions`
+    ),
+  async downloadRegulatoryXml(exportId: number, filename?: string) {
+    const headers: HeadersInit = {};
+    if (token) headers.Authorization = `Bearer ${token}`;
+    const res = await fetch(`${API_BASE}/api/exports/${exportId}/xml`, { headers });
+    if (!res.ok) throw new Error(formatApiError(await res.text(), res.statusText));
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename || `regulatory_${exportId}.xml`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  },
+  regulatoryRecord: (articleId: number) =>
+    request<RegulatoryRecord | null>(
+      `/api/regulatory/articles/${articleId}/record`
+    ),
+  regulatoryDecision: (
+    articleId: number,
+    body: { decision: SubmissionStatus; reason: string }
+  ) =>
+    request<RegulatoryRecord>(
+      `/api/regulatory/articles/${articleId}/decision`,
+      { method: "POST", body: JSON.stringify(body) }
+    ),
+  regulatorySubmission: (
+    articleId: number,
+    body: {
+      gateway: string;
+      submission_reference: string;
+      submitted_at?: string;
+      acknowledgement?: string;
+    }
+  ) =>
+    request<RegulatoryRecord>(
+      `/api/regulatory/articles/${articleId}/submission`,
+      { method: "POST", body: JSON.stringify(body) }
+    ),
+
+  exceptionSummary: (opts?: { product_id?: number; mine_only?: boolean }) =>
+    request<ExceptionSummary>(
+      `/api/exceptions/summary${qs({
+        product_id: opts?.product_id ? String(opts.product_id) : undefined,
+        mine_only: opts?.mine_only ? "true" : undefined,
+      })}`
+    ),
+
+  audit: (opts?: {
+    actor?: string;
+    entity_type?: string;
+    entity_id?: string;
+    action?: string;
+    created_from?: string;
+    created_to?: string;
+  }) =>
+    request<AuditEvent[]>(
       `/api/audit${qs({
+        actor: opts?.actor,
         entity_type: opts?.entity_type,
         entity_id: opts?.entity_id,
         action: opts?.action,
+        created_from: opts?.created_from,
+        created_to: opts?.created_to,
       })}`
     ),
+  auditFacets: () => request<AuditFacets>("/api/audit/facets"),
+  async downloadAudit(opts?: {
+    actor?: string;
+    entity_type?: string;
+    action?: string;
+    created_from?: string;
+    created_to?: string;
+  }) {
+    const headers: HeadersInit = {};
+    if (token) headers.Authorization = `Bearer ${token}`;
+    const res = await fetch(
+      `${API_BASE}/api/audit/export${qs({
+        actor: opts?.actor,
+        entity_type: opts?.entity_type,
+        action: opts?.action,
+        created_from: opts?.created_from,
+        created_to: opts?.created_to,
+      })}`,
+      { headers }
+    );
+    if (!res.ok) throw new Error(formatApiError(await res.text(), res.statusText));
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `litmon_audit_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  },
   slaOverdue: () =>
     request<{ count: number; items: Record<string, unknown>[] }>("/api/sla/overdue"),
   slaSummary: () => request<Record<string, unknown>>("/api/sla/summary"),

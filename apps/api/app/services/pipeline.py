@@ -13,6 +13,7 @@ from app.core.config import get_settings
 from app.models import (
     Article,
     ArticleAppearance,
+    LiteratureSource,
     Product,
     ScreeningResult,
     SearchRun,
@@ -22,12 +23,13 @@ from app.models import (
 from app.models.entities import (
     ArticleStatus,
     Classification,
+    ExceptionCause,
     Priority,
     QueueType,
     SearchRunStatus,
 )
 from app.services.ai.scorer import score_article
-from app.services.alerts import create_alert
+from app.services import triggers
 from app.services.omnichannel import route_article
 from app.services.audit import log_event
 from app.services.pubmed.client import PubMedClient
@@ -45,6 +47,15 @@ _QUEUE_PRIORITY = {
 
 def _priority_for_queue(queue: QueueType) -> Priority:
     return _QUEUE_PRIORITY.get(queue, Priority.P3)
+
+
+def pubmed_source_id(db: Session) -> int | None:
+    """The LiteratureSource row for PubMed, which is what the pilot retrieves from.
+
+    Returns ``None`` rather than raising if the row is absent: a missing source
+    label is not a reason to refuse to ingest safety literature.
+    """
+    return db.scalar(select(LiteratureSource.id).where(LiteratureSource.name == "PubMed"))
 
 
 def product_name_list(product: Product) -> list[str]:
@@ -152,6 +163,7 @@ async def run_search(
             fetched = await client.efetch(new_pmids) if new_pmids else []
             names = product_name_list(product)
             new_count = 0
+            source_id = pubmed_source_id(db)
 
             for dto in fetched:
                 article = Article(
@@ -168,6 +180,11 @@ async def run_search(
                     pubmed_url=dto.pubmed_url,
                     content_hash=dto.content_hash,
                     status=ArticleStatus.NEW_ALERT,
+                    # Without this every newly ingested article is source-less
+                    # and drops out of the source filter and the dashboard's
+                    # by-source breakdown. The migration backfilled the old
+                    # rows; the ingest path has to stamp the new ones.
+                    literature_source_id=source_id,
                 )
                 db.add(article)
                 db.flush()
@@ -178,7 +195,41 @@ async def run_search(
                         is_first_seen=True,
                     )
                 )
-                await score_and_route_article(db, article, product, names)
+                if not (dto.abstract or "").strip():
+                    # Nothing to screen against. Auto-clearing this as
+                    # irrelevant would be a silent discard of a possibly
+                    # reportable article, so it goes to a human instead.
+                    triggers.flag_exception(
+                        db,
+                        article=article,
+                        cause=ExceptionCause.FULL_TEXT_UNAVAILABLE,
+                        detail="PubMed returned no abstract for this record.",
+                        user_id=product.primary_reviewer_id,
+                    )
+                else:
+                    try:
+                        await score_and_route_article(db, article, product, names)
+                    except Exception as score_exc:  # noqa: BLE001
+                        # One unscoreable article must not fail the whole run
+                        # and lose the other results with it.
+                        triggers.flag_exception(
+                            db,
+                            article=article,
+                            cause=ExceptionCause.EXTRACTION_FAILED,
+                            detail=str(score_exc),
+                            user_id=product.primary_reviewer_id,
+                        )
+                        log_event(
+                            db,
+                            actor=triggered_by,
+                            action="article_scoring_failed",
+                            entity_type="article",
+                            entity_id=article.id,
+                            payload={
+                                "error": str(score_exc),
+                                "error_type": type(score_exc).__name__,
+                            },
+                        )
                 new_count += 1
 
             run.new_article_count = new_count
@@ -213,14 +264,12 @@ async def run_search(
         run.status = SearchRunStatus.FAILED
         run.error_message = err_text
         run.completed_at = datetime.now(timezone.utc)
-        create_alert(
+        triggers.search_failed(
             db,
+            product=product,
             user_id=product.primary_reviewer_id,
-            alert_type="search_failed",
-            priority="high",
-            title=f"Search failed for {product.name}",
-            message=err_text,
-            dedupe_key=f"search-failed:{run.id}",
+            run_id=run.id,
+            error=err_text,
         )
         log_event(
             db,
@@ -321,6 +370,17 @@ async def score_and_route_article(
         icsr_criteria_match=output.icsr_criteria_match,
         composite=output.composite,
         entities=output.entities,
+        indication=output.indication,
+        dosage=output.dosage,
+        outcome=output.outcome,
+        seriousness=output.seriousness,
+        country_of_occurrence=output.country_of_occurrence,
+        reporter_type=output.reporter_type,
+        concomitant_medication=output.concomitant_medication,
+        article_excerpts=output.article_excerpts,
+        relevance_reason=output.relevance_reason,
+        confidence=output.confidence,
+        processed_at=datetime.now(timezone.utc),
         icsr_precheck=output.icsr_precheck.model_dump(),
         reason_tags=[t.model_dump() for t in output.reason_tags],
         hard_rule_candidates=list(output.hard_rule_candidates),
@@ -393,16 +453,23 @@ async def score_and_route_article(
         assignee, routing_reason = route_article(db, product=product, article=article)
         article.assignee_id = assignee.id if assignee else None
         if assignee:
-            create_alert(
+            triggers.awaiting_review(
                 db,
+                article=article,
                 user_id=assignee.id,
-                article_id=article.id,
-                alert_type="work_assigned",
-                priority="high" if queue in (QueueType.EXPEDITED, QueueType.PRIORITY) else "normal",
-                title=f"{queue.value.replace('_', ' ').title()} literature review assigned",
-                message=article.title,
-                dedupe_key=f"assignment:{article.id}:{screening.id}",
+                queue=queue.value,
+                high=queue in (QueueType.EXPEDITED, QueueType.PRIORITY),
             )
+        # Content-driven triggers: a potential signal or a serious outcome is
+        # worth its own alert regardless of which queue the article landed in.
+        triggers.on_article_scored(
+            db,
+            article=article,
+            user_id=article.assignee_id or product.primary_reviewer_id,
+            classification=classification,
+            confidence=screening.confidence,
+            seriousness=screening.seriousness,
+        )
         log_event(
             db,
             actor="system",

@@ -28,6 +28,15 @@ def test_mock_scorer_flags_case_report(monkeypatch):
     assert not meta.get("llm_fallback")
     assert out.product_match >= 0.8
     assert "death_with_product" in out.hard_rule_candidates or out.composite > 0.3
+    assert out.seriousness == "fatal"
+    assert out.outcome == "fatal"
+    assert out.reporter_type == "literature authors"
+    assert out.article_excerpts == [
+        "We report a patient who died after atorvastatin.",
+        "Adverse reaction described.",
+    ]
+    assert out.relevance_reason
+    assert out.confidence is not None
 
 
 def test_prompt_system_requires_overflag_and_json():

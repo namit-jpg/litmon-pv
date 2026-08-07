@@ -25,6 +25,10 @@ Score biomedical abstracts for product relevance, adverse-event relevance, and I
 minimum criteria (identifiable patient, suspect drug, adverse event, identifiable reporter).
 Return ONLY valid JSON matching the schema. Prefer over-flagging possible cases.
 Include short evidence quotes in reason tags and icsr_precheck.evidence fields.
+Populate structured extraction fields only when directly supported by the supplied
+title or abstract. article_excerpts must be short verbatim excerpts from that input.
+Use null or an empty list when information is not stated; never infer demographics,
+dosage, country, outcome, reporter type, or concomitant medication.
 Never invent PMIDs or citations not present in the input."""
 
 PROMPT_USER_TEMPLATE_KEYS = (
@@ -205,6 +209,31 @@ def _heuristic_screen(
         + ("Hard rules: " + ", ".join(hard) if hard else "No hard-rule triggers.")
     )
 
+    # Keep fallback extraction deterministic and evidence-grounded. It is
+    # intentionally conservative: excerpts are copied from the input and
+    # unstated clinical fields remain null.
+    sentences = [
+        part.strip()
+        for part in re.split(r"(?<=[.!?])\s+", abstract or "")
+        if part.strip()
+    ]
+    evidence_terms = [
+        *(name.lower() for name in product_names if name),
+        *event_hits,
+    ]
+    excerpts = [
+        sentence
+        for sentence in sentences
+        if any(term in sentence.lower() for term in evidence_terms)
+    ][:3]
+    seriousness = None
+    if any(term in text_l for term in ("death", "died", "fatal")):
+        seriousness = "fatal"
+    elif "life-threatening" in text_l or "life threatening" in text_l:
+        seriousness = "life-threatening"
+    elif "hospitali" in text_l:
+        seriousness = "hospitalisation"
+
     return ScreeningOutput(
         product_match=round(product_match, 4),
         event_relevance=round(event_relevance, 4),
@@ -218,6 +247,12 @@ def _heuristic_screen(
         reason_tags=tags,
         hard_rule_candidates=hard,
         summary_for_reviewer=summary,
+        outcome=seriousness,
+        seriousness=seriousness,
+        reporter_type="literature authors" if reporter_cues else None,
+        article_excerpts=excerpts,
+        relevance_reason=summary,
+        confidence=round((product_match + event_relevance + criteria_score) / 3, 4),
     )
 
 

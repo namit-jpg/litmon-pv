@@ -1,19 +1,21 @@
 from datetime import date, datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import app.models  # noqa: F401
 from app.core.database import Base
-from app.models import Product, ScheduleFrequency, SearchSchedule, SearchString
+from app.models import Alert, Product, ScheduleFrequency, SearchSchedule, SearchString, User
+from app.models.entities import Role
 from app.services.schedules import (
     advance_past,
     compute_next_run,
     default_lookback_days,
     due_schedules,
     is_expired,
+    run_schedule,
 )
 
 
@@ -133,3 +135,41 @@ def test_lookback_covers_the_interval():
     assert default_lookback_days(ScheduleFrequency.DAILY) >= 1
     assert default_lookback_days(ScheduleFrequency.WEEKLY) >= 7
     assert default_lookback_days(ScheduleFrequency.MONTHLY) >= 31
+
+
+def test_missing_active_search_string_creates_in_app_failure_alert():
+    db = session()
+    reviewer = User(
+        email="schedule-owner@example.com",
+        full_name="Schedule Owner",
+        hashed_password="unused",
+        role=Role.REVIEWER,
+    )
+    product = Product(
+        name="Unconfigured Product",
+        brands=[],
+        synonyms=[],
+        primary_reviewer_id=None,
+    )
+    db.add_all([reviewer, product])
+    db.flush()
+    product.primary_reviewer_id = reviewer.id
+    schedule = SearchSchedule(
+        product_id=product.id,
+        frequency=ScheduleFrequency.DAILY,
+        end_date=date.today() + timedelta(days=7),
+        lookback_days=2,
+        max_fetch=10,
+        is_active=True,
+        next_run_at=datetime.now(timezone.utc),
+    )
+    db.add(schedule)
+    db.flush()
+
+    result = __import__("asyncio").run(run_schedule(db, schedule))
+
+    assert result["status"] == "no_active_search_string"
+    alert = db.scalar(select(Alert).where(Alert.alert_type == "search_failed"))
+    assert alert is not None
+    assert alert.user_id == reviewer.id
+    assert alert.channels == ["in_app"]

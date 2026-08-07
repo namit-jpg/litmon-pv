@@ -198,29 +198,13 @@ async def _handle_batch_rescore(db: Session, payload: dict[str, Any]) -> dict:
 
 
 async def _handle_sla_check(db: Session, payload: dict[str, Any]) -> dict:
-    from app.services.sla import list_overdue_articles
-    from app.services.notifications import notify_sla_breaches
+    """Run the three time-driven alert triggers together.
 
-    items = list_overdue_articles(db)
-    from app.models import Article
-    from app.services.alerts import create_alert
-
-    for item in items:
-        article = db.get(Article, int(item["id"]))
-        if article and article.assignee_id:
-            create_alert(
-                db,
-                user_id=article.assignee_id,
-                article_id=article.id,
-                alert_type="review_overdue",
-                priority="high",
-                title="Literature review overdue",
-                message=f"{article.title} is {item['hours_overdue']} hours overdue.",
-                dedupe_key=f"overdue:{article.id}",
-            )
-    db.commit()
-    notify_sla_breaches(items)
-    return {"overdue": len(items), "items": items[:100]}
+    Deadline-approaching, overdue and no-search-in-period all key off elapsed
+    time rather than an event, so one scheduled check covers all three.
+    """
+    from app.services import triggers
+    return triggers.run_time_driven_alerts(db)
 
 
 async def _handle_run_search(db: Session, payload: dict[str, Any]) -> dict:

@@ -12,10 +12,53 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Article, Product
-from app.models.entities import ArticleStatus
+from app.models.entities import ArticleStatus, ExceptionCause
+from app.services import triggers
 from app.services.audit import log_event
-from app.services.pipeline import product_name_list, score_and_route_article
+from app.services.pipeline import (
+    product_name_list,
+    pubmed_source_id,
+    score_and_route_article,
+)
 from app.services.pubmed.client import PubMedClient
+
+
+async def _screen_or_flag(
+    db: Session,
+    *,
+    article: Article,
+    product: Product,
+    names: list[str],
+    actor: str,
+) -> None:
+    """Screen one imported article without allowing it to disappear on failure."""
+    if not (article.abstract or "").strip():
+        triggers.flag_exception(
+            db,
+            article=article,
+            cause=ExceptionCause.FULL_TEXT_UNAVAILABLE,
+            detail="The imported record has no abstract available for screening.",
+            user_id=product.primary_reviewer_id,
+        )
+        return
+    try:
+        await score_and_route_article(db, article, product, names)
+    except Exception as exc:  # noqa: BLE001 - preserve the article for review
+        triggers.flag_exception(
+            db,
+            article=article,
+            cause=ExceptionCause.EXTRACTION_FAILED,
+            detail=str(exc),
+            user_id=product.primary_reviewer_id,
+        )
+        log_event(
+            db,
+            actor=actor,
+            action="imported_article_scoring_failed",
+            entity_type="article",
+            entity_id=article.id,
+            payload={"error": str(exc), "error_type": type(exc).__name__},
+        )
 
 
 def parse_pmid_list(text: str) -> list[str]:
@@ -80,6 +123,7 @@ async def import_pmids_from_pubmed(
     rehit = len(pmids) - len(new_pmids)
 
     created_ids: list[int] = []
+    source_id = pubmed_source_id(db)
     async with PubMedClient() as client:
         fetched = await client.efetch(new_pmids)
     for dto in fetched:
@@ -97,10 +141,13 @@ async def import_pmids_from_pubmed(
             pubmed_url=dto.pubmed_url,
             content_hash=dto.content_hash,
             status=ArticleStatus.NEW_ALERT,
+            literature_source_id=source_id,
         )
         db.add(art)
         db.flush()
-        await score_and_route_article(db, art, product, names)
+        await _screen_or_flag(
+            db, article=art, product=product, names=names, actor=actor
+        )
         created_ids.append(art.id)
 
     log_event(
@@ -198,10 +245,13 @@ async def import_csv_rows(
             else (f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/" if pmid.isdigit() else None),
             content_hash=dto.content_hash if dto else None,
             status=ArticleStatus.NEW_ALERT,
+            literature_source_id=pubmed_source_id(db),
         )
         db.add(art)
         db.flush()
-        await score_and_route_article(db, art, product, names)
+        await _screen_or_flag(
+            db, article=art, product=product, names=names, actor=actor
+        )
         created += 1
         article_ids.append(art.id)
 

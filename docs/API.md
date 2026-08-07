@@ -1,6 +1,6 @@
 # REST API reference (pilot)
 
-Base URL (local): `http://127.0.0.1:8000`  
+Base URL (local): `http://127.0.0.1:8000`
 Interactive docs: `/docs` (Swagger) · `/redoc`
 
 Most routes require:
@@ -30,6 +30,7 @@ Rate limit: 10 login attempts / 5 minutes per IP+email.
 | Method | Path | Roles | Description |
 |--------|------|-------|-------------|
 | GET | `/api/products` | any | List monitored products |
+| POST | `/api/products` | pv_lead, admin | Create a monitored product and its PV ownership details |
 | PATCH | `/api/products/{id}` | pv_lead, admin | Update product config and primary reviewer; reassigns open work |
 | GET | `/api/search-strings` | any | Versioned PubMed queries |
 | POST | `/api/search-strings` | pv_lead, admin | Create new active search string |
@@ -37,7 +38,18 @@ Rate limit: 10 login attempts / 5 minutes per IP+email.
 | GET | `/api/search-runs/{id}` | any | Search-run detail + article appearances |
 | POST | `/api/search-runs` | reviewer+ | Live ESearch→EFetch→score (`days` 7/14/30 or `date_from`/`date_to`) |
 | POST | `/api/search-runs/{id}/retry` | reviewer+ | Re-run same string + date window (new SearchRun row) |
-| POST | `/api/demo/seed-articles` | pv_lead, admin | Offline demo articles |
+
+### Literature sources and recurring searches
+
+| Method | Path | Roles | Description |
+|--------|------|-------|-------------|
+| GET, POST | `/api/literature-sources` | GET any; POST pv_lead, admin | List or create literature-source records |
+| PATCH | `/api/literature-sources/{id}` | pv_lead, admin | Update source metadata or enablement; a source cannot be enabled without a retrieval path |
+| GET | `/api/literature-sources/connection` | any | Persisted PubMed connection/run health for the last seven days |
+| GET, POST | `/api/search-schedules` | GET any; POST reviewer+ | List or create per-product recurring searches |
+| PATCH, DELETE | `/api/search-schedules/{id}` | reviewer+ | Update/resume or stop a schedule; stop is soft and remains audited |
+| POST | `/api/search-schedules/run-due` | pv_lead, admin | Run currently due schedules now; useful for pilot testing or an external scheduler |
+| GET | `/api/exceptions/summary` | any | Itemised exception-queue counts without collapsing the unresolved `invalid` meanings |
 
 ---
 
@@ -102,8 +114,9 @@ Include explicit ICSR checklist booleans when confirming cases.
 |--------|------|-------------|
 | GET | `/api/dashboard/summary?mine_only=true` | Assignment, unassigned triage, signal, ICSR, overdue, and product counts |
 | GET | `/api/dashboard/metrics?mine_only=true` | Step-12 measures, each with a workspace drill-through filter payload |
+| GET | `/api/workspace/folders` | Current user's workflow-folder counts and filters |
 | GET | `/api/alerts` | Current user's persistent alerts; supports `unread_only`, `priority`, `product_id`, `alert_type`, `created_from`, `created_to` |
-| GET | `/api/alerts/settings` | Pilot notification channels: in-app plus optionally configured email |
+| GET | `/api/alerts/settings` | Pilot alert delivery settings: persistent in-app inbox only |
 | POST | `/api/alerts/{id}/read` | Mark one alert read |
 | POST | `/api/alerts/read-all` | Mark all current-user alerts read |
 | GET | `/api/presence` | Current reviewer presence, active work, and capacity |
@@ -122,17 +135,15 @@ records the resulting reference.
 | GET | `/api/regulatory/articles/{id}/validate` | Resolve the deployment-configured mandatory-field registry and report blocking omissions |
 | POST | `/api/regulatory/articles/{id}/generate` | Generate a versioned one-article E2B(R2)-shaped XML package; returns 422 while validation is blocked |
 | GET | `/api/regulatory/articles/{id}/versions` | List the article's generated regulatory package versions |
-| GET | `/api/regulatory/articles/{id}/record` | Read the recorded decision and manual gateway evidence |
+| GET | `/api/regulatory/articles/{id}/record` | Read the recorded decision and manual gateway evidence; returns `null` before the first decision |
 | POST | `/api/regulatory/articles/{id}/decision` | Record `approved_for_submission` or `retained_internally` with a reason |
 | POST | `/api/regulatory/articles/{id}/submission` | Record manual gateway, reference, timestamp and acknowledgement; only after an approved decision and generated package |
 
-The field registry is supplied through `REGULATORY_MANDATORY_FIELDS_JSON`. It
-is deliberately empty by default until the partner supplies an official CDSCO
-specification, so these new endpoints block generation rather than pretending
-the prototype is submission-ready.
-
-| Method | Path | Description |
-|--------|------|-------------|
+The field registry is supplied through `REGULATORY_MANDATORY_FIELDS_JSON`.
+`.env.example` carries a minimal prototype registry for PMID, suspect product,
+and adverse event so the versioning workflow can be exercised. Deployments must
+replace it when the partner supplies the official specification. Every output
+continues to say that it is a prototype and not a validated CDSCO submission.
 
 | Method | Path | Description |
 |--------|------|-------------|

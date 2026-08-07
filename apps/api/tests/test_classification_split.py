@@ -15,7 +15,14 @@ from sqlalchemy.pool import StaticPool
 import app.models  # noqa: F401
 from app.api.routes import _set_signal_tag, submit_review
 from app.core.database import Base
-from app.models import Article, ArticleSignalTag, Product, User
+from app.models import (
+    Article,
+    ArticleSignalTag,
+    AuditEvent,
+    Product,
+    RegulatoryRecord,
+    User,
+)
 from app.models.entities import (
     CLOSED_STATUSES,
     WORKSPACE_FOLDERS,
@@ -24,6 +31,7 @@ from app.models.entities import (
     DecisionAction,
     Role,
     SignalTag,
+    SubmissionStatus,
 )
 from app.schemas.api import ReviewIn
 
@@ -161,3 +169,38 @@ def test_new_decision_actions_land_on_the_right_folder():
             article.id, ReviewIn(action=action, rationale="x"), db=db, user=user
         )
         assert article.status == expected, action
+
+
+def test_submission_decision_syncs_regulatory_record_tags_and_audit_evidence():
+    db = session()
+    user, _, article = _fixture(db)
+    submit_review(
+        article.id,
+        ReviewIn(
+            action=DecisionAction.PREPARE_FOR_SUBMISSION,
+            rationale="Meets the four minimum criteria",
+            supporting_documents=["controlled://full-text/123"],
+        ),
+        db=db,
+        user=user,
+    )
+
+    record = db.scalar(
+        select(RegulatoryRecord).where(RegulatoryRecord.article_id == article.id)
+    )
+    assert record is not None
+    assert record.decision == SubmissionStatus.APPROVED_FOR_SUBMISSION
+    assert record.decision_reason == "Meets the four minimum criteria"
+    assert SignalTag.SUBMISSION_REQUIRED in {
+        row.tag for row in article.signal_tags
+    }
+    assert article.review_decisions[0].supporting_documents == [
+        "controlled://full-text/123"
+    ]
+    event = db.scalar(
+        select(AuditEvent)
+        .where(AuditEvent.action == "review_prepare_for_submission")
+        .order_by(AuditEvent.id.desc())
+    )
+    assert event.payload["previous_status"] == ArticleStatus.AWAITING_REVIEW.value
+    assert event.payload["new_status"] == ArticleStatus.APPROVED_FOR_SUBMISSION.value

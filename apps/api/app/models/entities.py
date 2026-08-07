@@ -146,24 +146,49 @@ class SubmissionStatus(str, enum.Enum):
 #: "Potential signals" is a tag filter rather than a status because an article
 #: can be a potential signal *and* awaiting review at the same time — which is
 #: the whole reason the old enum had to be split.
+#: Labels live here rather than in the client so the folder list, its counts
+#: and its ordering all come from one place.
 WORKSPACE_FOLDERS: dict[str, dict[str, Any]] = {
-    "new_alerts": {"statuses": [ArticleStatus.NEW_ALERT]},
-    "awaiting_review": {
-        "statuses": [ArticleStatus.AWAITING_REVIEW, ArticleStatus.QC_SAMPLE]
+    "new_alerts": {
+        "label": "New alerts",
+        "statuses": [ArticleStatus.NEW_ALERT],
     },
-    "potential_signals": {"signal_tags": [SignalTag.POTENTIAL_SIGNAL]},
+    "awaiting_review": {
+        "label": "Awaiting review",
+        "statuses": [ArticleStatus.AWAITING_REVIEW, ArticleStatus.QC_SAMPLE],
+    },
+    "potential_signals": {
+        "label": "Potential signals",
+        "signal_tags": [SignalTag.POTENTIAL_SIGNAL],
+    },
     "under_assessment": {
+        "label": "Under assessment",
         "statuses": [
             ArticleStatus.UNDER_ASSESSMENT,
             ArticleStatus.DEFERRED,
             ArticleStatus.SECOND_REVIEW,
-        ]
+        ],
     },
-    "exceptions": {"statuses": [ArticleStatus.EXCEPTION]},
-    "approved_for_submission": {"statuses": [ArticleStatus.APPROVED_FOR_SUBMISSION]},
-    "not_for_submission": {"statuses": [ArticleStatus.NOT_FOR_SUBMISSION]},
-    "submitted": {"statuses": [ArticleStatus.SUBMITTED]},
-    "archived": {"statuses": [ArticleStatus.ARCHIVED]},
+    "exceptions": {
+        "label": "Invalid / failed",
+        "statuses": [ArticleStatus.EXCEPTION],
+    },
+    "approved_for_submission": {
+        "label": "Approved for submission",
+        "statuses": [ArticleStatus.APPROVED_FOR_SUBMISSION],
+    },
+    "not_for_submission": {
+        "label": "Not for submission",
+        "statuses": [ArticleStatus.NOT_FOR_SUBMISSION],
+    },
+    "submitted": {
+        "label": "Submitted",
+        "statuses": [ArticleStatus.SUBMITTED],
+    },
+    "archived": {
+        "label": "Archived",
+        "statuses": [ArticleStatus.ARCHIVED],
+    },
 }
 
 #: Terminal states — an article here needs no further reviewer action. Several
@@ -670,6 +695,9 @@ class ReviewDecision(Base):
     event_terms: Mapped[list[Any]] = mapped_column(JSON, default=list)
     suspect_products: Mapped[list[Any]] = mapped_column(JSON, default=list)
     override_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Names or URLs in the controlled document repository. The pilot records
+    # references without taking custody of regulated files in local storage.
+    supporting_documents: Mapped[list[Any]] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

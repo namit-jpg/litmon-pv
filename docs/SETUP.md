@@ -13,7 +13,8 @@ Use this when cloning the GitHub repo onto another laptop (or spinning up a seco
 | (Optional) NCBI API key | free | [NCBI account](https://www.ncbi.nlm.nih.gov/account/) |
 | (Optional) LLM API key | OpenAI-compatible | Real AI scoring; mock works offline |
 
-Docker is **optional** (Postgres via `docker-compose.yml`). Default DB is SQLite.
+Docker is not required. The default database is SQLite; PostgreSQL can be
+provisioned separately through `DATABASE_URL`.
 
 ---
 
@@ -104,7 +105,7 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:5173  
+Open http://localhost:5173
 
 Vite proxies `/api` → `http://127.0.0.1:8000`.
 
@@ -125,11 +126,11 @@ Change these before any shared/pilot environment.
 
 ## 6. First actions after setup
 
-1. Sign in as **admin**  
-2. **Admin → Seed demo articles** (offline path)  
-3. Open **Queues** → triage a few cards  
-4. Optional: set `NCBI_EMAIL` and **Run PubMed search**  
-5. Optional: **Ops** for metrics / SLA  
+1. Sign in as **admin**.
+2. Add or select a monitored product under **Product search** and assign its reviewer under **Products**.
+3. Run a bounded PubMed search, then inspect **Workspace** and **Alerts**.
+4. Optionally configure an active search string and recurring schedule under **Search & schedule**.
+5. Use **Pilot tools** for runtime configuration, exports, evaluation, jobs, and metrics.
 
 ---
 
@@ -158,16 +159,14 @@ After model changes: `alembic revision --autogenerate -m "…"` then upgrade.
 
 ## 8. Optional Postgres
 
-```bash
-# requires Docker
-docker compose up -d db
-```
+This repository does not include a Docker Compose database service. Provision a
+PostgreSQL instance separately, then point the API at it:
 
 ```env
 DATABASE_URL=postgresql+psycopg://litmon:litmon@localhost:5432/litmon
 ```
 
-Re-run bootstrap against the new DB.
+Run migrations and bootstrap against the new database.
 
 ---
 
@@ -186,7 +185,7 @@ Re-run bootstrap against the new DB.
 
 ## 10. Cross-laptop collaboration
 
-1. Work on feature branches: `git checkout -b feature/my-work`  
-2. Push and open PRs on GitHub  
-3. Never push `.env`, `*.db`, or API keys  
-4. Point the other agent at [AGENTS.md](AGENTS.md) for project context  
+1. Work on feature branches: `git checkout -b feature/my-work`
+2. Push and open PRs on GitHub
+3. Never push `.env`, `*.db`, or API keys
+4. Point the other agent at [AGENTS.md](AGENTS.md) for project context

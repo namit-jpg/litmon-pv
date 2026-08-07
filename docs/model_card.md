@@ -13,21 +13,21 @@ Rank and explain biomedical abstracts for a monitored product. Route to Auto-Cle
 
 ## Out of scope
 
-- Final ICSR validity without human review  
-- Silent discard of potential cases  
-- Direct regulatory submission  
+- Final ICSR validity without human review
+- Silent discard of potential cases
+- Direct regulatory submission
 
 ## Inputs
 
-- Title, abstract, journal, MeSH terms  
-- Monitored product names / brands / synonyms  
+- Title, abstract, journal, MeSH terms
+- Monitored product names / brands / synonyms
 
 ## Outputs
 
-- `product_match`, `event_relevance`, `icsr_criteria_match`, `composite`  
-- Reason tags with evidence labels  
-- ICSR four-criteria pre-check  
-- Hard-rule candidates (death, pregnancy, pediatric, IME, ambiguous)  
+- `product_match`, `event_relevance`, `icsr_criteria_match`, `composite`
+- Reason tags with evidence labels
+- ICSR four-criteria pre-check
+- Hard-rule candidates (death, pregnancy, pediatric, IME, ambiguous)
 
 ## Modes
 
@@ -42,12 +42,12 @@ Rank and explain biomedical abstracts for a monitored product. Route to Auto-Cle
 Articles are **never dropped** because the LLM is down. On transport timeout,
 5xx/429 (after limited retries), 4xx, or invalid JSON:
 
-1. Score with the deterministic heuristic (same as mock, tends to over-flag).  
-2. Set `is_mock=true`, `model_id=heuristic-fallback-v1`.  
-3. Emit audit event `llm_fallback_heuristic` on the article.  
+1. Score with the deterministic heuristic (same as mock, tends to over-flag).
+2. Set `is_mock=true`, `model_id=heuristic-fallback-v1`.
+3. Emit audit event `llm_fallback_heuristic` on the article.
 4. Increment Ops metrics: `scoring.llm_fallbacks`, `scoring.llm_timeouts`, `scoring.llm_retries`.
 
-Admin → **Runtime config** shows `LLM_MOCK` / live mode (env-driven; restart API to change).
+**Pilot tools** → **Runtime configuration** shows `LLM_MOCK` / live mode (env-driven; restart API to change).
 
 ## Thresholds (starting — calibrate in pilot)
 

@@ -6,7 +6,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Alert
-from app.core.config import get_settings
 from app.services.audit import log_event
 
 
@@ -29,9 +28,10 @@ def create_alert(
         ).first()
         if existing:
             return existing
+    # This MVP deliberately implements the auditable in-app inbox only.
+    # Keeping a list preserves a future extension point without claiming that
+    # email, SMS, chat or push delivery occurred.
     channels = ["in_app"]
-    if get_settings().notify_email_enabled:
-        channels.append("email")
     alert = Alert(
         user_id=user_id,
         article_id=article_id,

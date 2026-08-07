@@ -6,11 +6,11 @@ You are working on **LitMon-PV** — Literature Monitoring Automation for Pharma
 
 An AI-assisted, **human-in-the-loop** pipeline that:
 
-1. Searches **PubMed** (NCBI E-utilities API only — free, no scraping)  
-2. Deduplicates by PMID/DOI  
-3. Scores abstracts (product match, event relevance, ICSR criteria) with reason tags  
-4. Routes to queues (Auto-Clear / Standard / Priority / Expedited) with SLAs  
-5. Lets PV reviewers confirm ICSR vs not-a-case with an explicit 4-criteria checklist  
+1. Searches **PubMed** (NCBI E-utilities API only — free, no scraping)
+2. Deduplicates by PMID/DOI
+3. Scores abstracts (product match, event relevance, ICSR criteria) with reason tags
+4. Routes to queues (Auto-Clear / Standard / Priority / Expedited) with SLAs
+5. Lets PV reviewers confirm ICSR vs not-a-case with an explicit 4-criteria checklist
 6. Exports structured packages for case management (no direct Argus integration)
 
 **Regulatory posture:** Pilot / prototype only — not GxP validated. Prefer over-flagging. Never silently discard potentially reportable articles.
@@ -37,62 +37,64 @@ After clone, the monorepo root contains `apps/`, `docs/`, `workers/`, `data/`.
 
 ## Local run (agent checklist)
 
-1. Copy `.env.example` → `.env`  
-2. `apps/api`: venv, `pip install -r requirements.txt`, `PYTHONPATH=.`, `python -m app.bootstrap`, `uvicorn app.main:app --port 8000`  
-3. `apps/web`: `npm install`, `npm run dev`  
-4. Tests: `pytest tests -q` from `apps/api`  
+1. Copy `.env.example` → `.env`
+2. `apps/api`: venv, `pip install -r requirements.txt`, `PYTHONPATH=.`, `python -m app.bootstrap`, `uvicorn app.main:app --port 8000`
+3. `apps/web`: `npm install`, `npm run dev`
+4. Tests: `pytest tests -q` from `apps/api`
 
 Default admin: `admin@litmon.local` / `admin123`
 
 ## Non-negotiables
 
-- Do **not** add Embase scraping or PubMed HTML scraping.  
-- Do **not** auto-finalize ICSR without human action.  
-- Do **not** hard-delete articles; use status + archive + recall.  
-- Do **not** commit secrets, `.env`, or `*.db`.  
-- Keep screening dimensions separate (product / event / icsr), not a single opaque score only.  
+- Do **not** add Embase scraping or PubMed HTML scraping.
+- Do **not** auto-finalize ICSR without human action.
+- Do **not** hard-delete articles; use status + archive + recall.
+- Do **not** commit secrets, `.env`, or `*.db`.
+- Keep screening dimensions separate (product / event / icsr), not a single opaque score only.
 - Log model/prompt/ruleset/threshold versions on every score.
 
 ## Out of scope (unless user explicitly expands)
 
-- Argus / ArisGlobal live integration  
-- Multi-tenant SaaS  
-- Formal GxP CSV package  
-- Social media listening  
-- Full native multi-language NLP  
+- Argus / ArisGlobal live integration
+- Multi-tenant SaaS
+- Formal GxP CSV package
+- Social media listening
+- Full native multi-language NLP
 
 ## Docs to read first
 
-1. [SETUP.md](SETUP.md)  
-2. [architecture.md](architecture.md)  
-3. [API.md](API.md)  
-4. [pilot_runbook.md](pilot_runbook.md)  
+1. [SETUP.md](SETUP.md)
+2. [architecture.md](architecture.md)
+3. [API.md](API.md)
+4. [pilot_runbook.md](pilot_runbook.md)
 
-## ⚠️ Active work: partner feedback MVP rebuild
+## Partner-feedback MVP status
 
-The partner has requested a substantial expansion. **Before starting any feature work, read
-[MVP_BUILD_BRIEF.md](MVP_BUILD_BRIEF.md)** — it supersedes the backlog below.
+Phases 1–4 of the approved partner-feedback MVP are implemented. **Before
+starting any feature work, read [MVP_BUILD_BRIEF.md](MVP_BUILD_BRIEF.md)** — it
+defines the current architecture and supersedes the historical backlog below.
+The manual functional rehearsal is intentionally user-owned and remains in
+[phase3_4_manual_test.md](phase3_4_manual_test.md); do not claim it has been
+performed unless its evidence is supplied.
 
 - [MVP_BUILD_BRIEF.md](MVP_BUILD_BRIEF.md) — phased implementation plan, open questions
 - [partner_feedback.md](partner_feedback.md) — the requirements themselves
 - [wireframes/mvp-wireframe.html](wireframes/mvp-wireframe.html) — approved wireframe, 9 screens,
   with per-element build notes. Open in a browser. **This is the design authority.**
 
-Headline: the app today is an ICSR triage tool; the partner wants a PV literature-monitoring
-platform. The engine stays; the domain model above it and the surfaces on top change. The
-load-bearing change is splitting classification from workflow status in `ArticleStatus`.
+Headline: the app is now a PV literature-monitoring platform over the existing
+search/scoring engine. Classification, workflow status, signal tags and
+regulatory disposition are separate. Alerts are persistent in-app records only;
+outbound notification channels are intentionally not implemented.
 
-## Older backlog (superseded — see brief above)
+## Post-MVP options — not current implementation work
 
-P0 (real-data) largely done in 0.2.1. Remaining backlog:
+Do not reopen these unless the user explicitly expands scope:
 
-- Multi-product admin UX (create product, synonyms, search strings)  
-- Queue filters (assignee, product, overdue, date range); bulk claim  
-- Article keyboard shortcuts  
-- Expand gold labels + evaluation export; threshold calibration notes  
-- Playwright E2E: login → seed → review ICSR → export  
-- Parallel-run export auto-compare on manual CSV re-upload  
-- docker-compose full stack + production pilot README (JWT, NCBI, backup)  
+- Browser-level regression coverage for login → search → review → regulatory export
+- Automatic comparison of parallel-run exports after manual CSV re-upload
+- Production deployment packaging, a singleton scheduler/worker, CI, and an operational runbook
+- Expanded evaluation labels and PV-owner threshold calibration
 
 ## Architecture one-liner
 

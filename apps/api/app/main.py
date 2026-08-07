@@ -56,7 +56,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="LitMon-PV API",
     description=(
-        "Literature Monitoring Automation for Pharmacovigilance — Phase 1 Pilot. "
+        "Literature Monitoring Automation for Pharmacovigilance — partner-feedback MVP. "
         "PubMed via NCBI E-utilities API. AI ranks/flags/explains; humans decide."
     ),
     version="0.2.1",

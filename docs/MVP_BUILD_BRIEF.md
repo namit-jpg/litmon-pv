@@ -1,6 +1,6 @@
 # MVP Build Brief — partner feedback implementation
 
-**Status:** approved wireframe, not yet built
+**Status:** Phases 1–4 implemented; manual pilot rehearsal pending
 **Date:** 07 Aug 2026
 **Scope:** Section 6 ("Recommended MVP Scope") of [partner_feedback.md](partner_feedback.md). Single client. Sections 7 (later phase) and the multi-client operating model are explicitly **out of scope**.
 
@@ -16,9 +16,11 @@ The wireframe is the design authority. Where this brief and the wireframe disagr
 
 The app today is an **ICSR triage tool**. The partner is asking for a **PV literature-monitoring platform**. The engine (PubMed search, dedup, AI scoring, SLA routing, audit) is sound and stays. What changes is the domain model above it and the surfaces on top.
 
-## Ordering — do it in these phases
+## Implementation record — completed phases
 
-Phase 1 unblocks everything else. Do not start Phase 3 before Phase 1 is merged.
+The following phases are retained as the implementation record. They are
+complete in the current working baseline; do not treat their original future-
+tense wording as an open backlog.
 
 ### Phase 1 — Domain model
 
@@ -68,6 +70,11 @@ Nine screens, mapped to existing files:
 - Exception queue: anything the pipeline cannot complete lands there and alerts, rather than being dropped.
 - Regulatory: mandatory-field validation that **blocks generation** and names what is missing; version store; submit-or-store decision; gateway reference capture.
 
+Implementation note (07 Aug 2026): the pilot uses persistent **in-app alerts
+only**. Outbound email, SMS, chat, WhatsApp and push channels were explicitly
+left out of this build. All eight Step-7 events are wired to the in-app inbox;
+time-driven alerts run from the schedule runner.
+
 ## Open questions — do not guess these
 
 These are unresolved with the partner. Build the mechanism, leave the specifics configurable, and flag them rather than inventing answers.
@@ -77,7 +84,7 @@ These are unresolved with the partner. Build the mechanism, leave the specifics 
 | **CDSCO XML schema** — no schema, mandatory-field list, validation rules, sample accepted file, or acknowledgement format has been supplied | Build the validation *mechanism* and the generation pipeline. The field list must be data-driven, not hardcoded. Ship it labelled "prototype — not a validated CDSCO submission". |
 | **What "invalid" means** — 7 candidate readings in feedback Section 8 | Keep exception causes itemised separately (full text unavailable / insufficient information / parse error / search failed). They can be regrouped in one place once defined. Do not collapse them into one bucket. |
 | **Which gateway** — CDSCO portal, PvPI, internal safety system, or third-party | Leave as an unset dropdown. The app never submits automatically regardless (Step 14). |
-| **Alert channels for pilot** | Build in-app and email only. Draw the rest as later-phase. |
+| **Alert channels for pilot** | Resolved for this build: persistent in-app inbox only. Outbound email, SMS, chat, WhatsApp and push are deliberately not implemented. |
 | **User assignment model** — one user for all, one per product, or primary + backup | `responsible_user_id` on Product supports per-product. Do not build escalation chains yet. |
 | **The four pilot products** | Wireframe brand names (Glucomet, Lipicor, Amoxiclan, Levracet) are placeholders. |
 

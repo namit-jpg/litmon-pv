@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, DashboardSummary } from "../api";
+import { api, ArticleFilters, DashboardMetrics, DashboardSummary } from "../api";
 import { useAuth } from "../auth";
 import DashboardCharts from "../components/DashboardCharts";
 
@@ -12,12 +12,18 @@ export default function DashboardPage() {
     user?.role === "reviewer" || user?.role === "senior_reviewer";
   const [mineOnly, setMineOnly] = useState(carriesOwnQueue);
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
+  const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
   const [error, setError] = useState("");
 
   async function load() {
     setError("");
     try {
-      setSummary(await api.dashboard(mineOnly));
+      const [legacySummary, phase3Metrics] = await Promise.all([
+        api.dashboard(mineOnly),
+        api.dashboardMetrics(mineOnly),
+      ]);
+      setSummary(legacySummary);
+      setMetrics(phase3Metrics);
     } catch (e) {
       setError(String(e));
     }
@@ -27,20 +33,14 @@ export default function DashboardPage() {
     load();
   }, [mineOnly]);
 
-  const scope = mineOnly ? "view=mine" : "view=all";
-  const cards = summary
-    ? [
-        ["Awaiting review", summary.awaiting_review, `/?${scope}&tab=all`],
-        ["Unassigned triage", summary.unassigned, "/?view=all&tab=all"],
-        ["Potential signals", summary.potential_signals, `/?${scope}&signal_status=potential_signal`],
-        ["Confirmed signals", summary.confirmed_signals, `/?${scope}&signal_status=confirmed_signal`],
-        ["Valid ICSR", summary.valid_icsr, `/?${scope}&status=disposition_valid_icsr`],
-        ["Not relevant", summary.not_relevant, `/?${scope}&status=disposition_not_case`],
-        ["Deferred", summary.deferred, `/?${scope}&status=deferred`],
-        ["Overdue", summary.overdue, `/?${scope}&overdue=true`],
-        ["Unread alerts", summary.unread_alerts, "/dashboard"],
-      ] as const
-    : [];
+  const workspaceLink = (filter: ArticleFilters) => {
+    const query = new URLSearchParams();
+    if (mineOnly) query.set("view", "mine");
+    Object.entries(filter).forEach(([key, value]) => {
+      if (value != null && value !== false) query.set(key, String(value));
+    });
+    return `/?${query.toString()}`;
+  };
 
   return (
     <div>
@@ -59,39 +59,45 @@ export default function DashboardPage() {
         </div>
       </div>
       {error && <div className="error">{error}</div>}
-      {!summary ? (
+      {!summary || !metrics ? (
         <p className="muted">Loading dashboard…</p>
       ) : (
         <>
-          <div className="dashboard-grid">
-            {cards.map(([label, value, href]) => (
-              <Link className="dashboard-card" to={href} key={label}>
-                <span>{label}</span>
-                <strong>{value}</strong>
+          <div className="dashboard-grid metric-grid">
+            {metrics.metrics.map((metric) => (
+              <Link className="dashboard-card" to={workspaceLink(metric.filter)} key={metric.key}>
+                <span>{metric.label}</span>
+                <strong>{metric.count}</strong>
                 <small>Open work list →</small>
               </Link>
             ))}
           </div>
-          <DashboardCharts summary={summary} />
           <section className="card">
-            <h2>Results by product</h2>
-            {summary.by_product.length === 0 ? (
-              <p className="muted">No literature results yet.</p>
-            ) : (
-              <div className="product-bars">
-                {summary.by_product.map((product) => (
-                  <Link
-                    to={`/?${scope}&tab=all&product_id=${product.product_id}`}
-                    className="product-bar"
-                    key={product.product_id}
-                  >
-                    <span>{product.product_name}</span>
-                    <strong>{product.count}</strong>
-                  </Link>
-                ))}
-              </div>
+            <h2>Alerts by priority</h2>
+            <div className="dashboard-grid">
+              {metrics.alerts_by_priority.map((metric) => (
+                <Link className="dashboard-card" key={metric.key} to={`/alerts?unread=false&priority=${metric.key.replace("alerts_", "")}`}>
+                  <span>{metric.label}</span><strong>{metric.count}</strong><small>Open alert inbox →</small>
+                </Link>
+              ))}
+              {metrics.alerts_by_priority.length === 0 ? <p className="muted">No alerts recorded.</p> : null}
+            </div>
+          </section>
+          <section className="card">
+            <h2>Monitoring coverage</h2>
+            <div className="dashboard-grid">
+              {metrics.results_by_product.map((row) => <Link className="dashboard-card" key={`product-${row.product_id}`} to={workspaceLink(row.filter)}><span>{row.product_name}</span><strong>{row.count}</strong><small>Results by product →</small></Link>)}
+              {metrics.results_by_ingredient.map((row) => <Link className="dashboard-card" key={`ingredient-${row.active_ingredient_id}`} to={workspaceLink(row.filter)}><span>{row.active_ingredient_name}</span><strong>{row.count}</strong><small>Results by ingredient / API →</small></Link>)}
+              {metrics.results_by_source.map((row) => <Link className="dashboard-card" key={`source-${row.literature_source_id}`} to={workspaceLink(row.filter)}><span>{row.literature_source_name}</span><strong>{row.count}</strong><small>Results by source →</small></Link>)}
+            </div>
+          </section>
+          <section className="card">
+            <h2>Search completion status</h2>
+            {metrics.search_completion_status.length === 0 ? <p className="muted">No product searches have run yet.</p> : (
+              <table className="table"><thead><tr><th>Product</th><th>Last status</th><th /></tr></thead><tbody>{metrics.search_completion_status.map((row) => <tr key={row.product_id}><td>{row.product_name}</td><td><span className="pill">{row.status}</span></td><td><Link className="btn ghost" to={workspaceLink(row.filter)}>Open results</Link></td></tr>)}</tbody></table>
             )}
           </section>
+          <DashboardCharts summary={summary} />
         </>
       )}
     </div>

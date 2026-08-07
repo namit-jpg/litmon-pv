@@ -78,6 +78,10 @@ class ProductOut(BaseModel):
     brands: list[Any]
     synonyms: list[Any]
     atc_code: Optional[str]
+    # Regulatory facts about the licence rather than the molecule, so they
+    # cannot come from RxNorm and have to be entered by hand.
+    mah: Optional[str] = None
+    markets: list[Any] = []
     is_active: bool
     primary_reviewer_id: Optional[int] = None
     active_ingredients: list[ActiveIngredientOut] = []
@@ -122,6 +126,8 @@ class ProductCreate(BaseModel):
     brands: list[Any] = Field(default_factory=list)
     synonyms: list[Any] = Field(default_factory=list)
     atc_code: Optional[str] = None
+    mah: Optional[str] = None
+    markets: list[Any] = Field(default_factory=list)
     primary_reviewer_id: Optional[int] = None
     active_ingredient_ids: list[int] = Field(default_factory=list)
     # Optional custom PubMed query. When omitted a starter query is generated
@@ -135,6 +141,8 @@ class ProductUpdate(BaseModel):
     brands: Optional[list[Any]] = None
     synonyms: Optional[list[Any]] = None
     atc_code: Optional[str] = None
+    mah: Optional[str] = None
+    markets: Optional[list[Any]] = None
     is_active: Optional[bool] = None
     primary_reviewer_id: Optional[int] = None
     # Replaces the product's API tag set when provided.
@@ -354,6 +362,7 @@ class ArticleDetail(BaseModel):
     product_name: Optional[str] = None
     active_ingredients: list[ActiveIngredientOut] = []
     assignee_id: Optional[int]
+    assignee_name: Optional[str] = None
     signal_status: SignalStatus = SignalStatus.NOT_ASSESSED
     priority: Priority = Priority.P3
     ai_classification: Optional[Classification] = None
@@ -361,6 +370,9 @@ class ArticleDetail(BaseModel):
     signal_tags: list[str] = []
     literature_source_id: Optional[int] = None
     literature_source_name: Optional[str] = None
+    search_date: Optional[datetime] = None
+    search_terms: Optional[str] = None
+    submission_status: SubmissionStatus = SubmissionStatus.PENDING_DECISION
     latest_screening: Optional[ScreeningOut] = None
     active_triage: Optional[TriageOut] = None
     decisions: list[Any] = []
@@ -384,6 +396,7 @@ class ReviewIn(BaseModel):
     event_terms: list[Any] = Field(default_factory=list)
     suspect_products: list[Any] = Field(default_factory=list)
     override_notes: Optional[str] = None
+    supporting_documents: list[str] = Field(default_factory=list)
 
 
 class ReviewOut(BaseModel):
@@ -487,6 +500,83 @@ class AlertSettingsOut(BaseModel):
     enabled_channels: list[str]
     available_channels: list[str]
     email_configured: bool
+
+
+class LiteratureSourceOut(BaseModel):
+    """A searchable source. Provider is a field, not a separate row."""
+
+    id: int
+    name: str
+    kind: str
+    provider: Optional[str] = None
+    access_model: str
+    retrieval: Optional[str] = None
+    coverage: Optional[str] = None
+    is_enabled: bool
+    article_count: int = 0
+
+    model_config = {"from_attributes": True}
+
+
+class LiteratureSourceIn(BaseModel):
+    name: str = Field(min_length=1, max_length=128)
+    kind: str = Field(default="bibliographic", max_length=64)
+    provider: Optional[str] = Field(default=None, max_length=128)
+    access_model: str = Field(default="public", max_length=64)
+    retrieval: Optional[str] = Field(default=None, max_length=255)
+    coverage: Optional[str] = Field(default=None, max_length=255)
+    is_enabled: bool = False
+
+
+class LiteratureSourceUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=128)
+    kind: Optional[str] = Field(default=None, max_length=64)
+    provider: Optional[str] = Field(default=None, max_length=128)
+    access_model: Optional[str] = Field(default=None, max_length=64)
+    retrieval: Optional[str] = Field(default=None, max_length=255)
+    coverage: Optional[str] = Field(default=None, max_length=255)
+    is_enabled: Optional[bool] = None
+
+
+class SourceConnectionOut(BaseModel):
+    """Live health for the one source the pilot actually retrieves from."""
+
+    source_name: str
+    contact_email: Optional[str] = None
+    contact_email_configured: bool
+    api_key_configured: bool
+    api_key_hint: Optional[str] = None
+    rate_limit_per_second: int
+    retry_policy: str
+    last_successful_call: Optional[datetime] = None
+    failures_last_7d: int
+    is_healthy: bool
+
+
+class SignalTagsIn(BaseModel):
+    """The reviewer's full tag selection — this replaces the existing set."""
+
+    tags: list[str] = Field(default_factory=list)
+
+
+class ClassificationIn(BaseModel):
+    """A human classification. The AI's proposal is never overwritten."""
+
+    classification: Classification
+    rationale: Optional[str] = None
+
+
+class ExceptionCauseCount(BaseModel):
+    cause: str
+    label: str
+    count: int
+    alerted: bool
+
+
+class ExceptionSummaryOut(BaseModel):
+    total: int
+    causes: list[ExceptionCauseCount]
+    notice: str
 
 
 class RegulatoryValidationField(BaseModel):

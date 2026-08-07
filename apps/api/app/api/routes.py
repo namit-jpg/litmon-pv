@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import csv
+import io
+import json
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
 
@@ -40,8 +43,10 @@ from app.models.entities import (
     ArticleStatus,
     Classification,
     DecisionAction,
+    ExceptionCause,
     QueueType,
     Role,
+    SearchRunStatus,
     SignalStatus,
     SignalTag,
     PresenceStatus,
@@ -63,6 +68,14 @@ from app.schemas.api import (
     DrugRef,
     ImportCsvIn,
     ImportPmidsIn,
+    ClassificationIn,
+    ExceptionCauseCount,
+    ExceptionSummaryOut,
+    LiteratureSourceIn,
+    LiteratureSourceOut,
+    LiteratureSourceUpdate,
+    SignalTagsIn,
+    SourceConnectionOut,
     ProductCreate,
     ProductOut,
     ProductUpdate,
@@ -386,6 +399,8 @@ async def create_product(
         brands=[b for b in (body.brands or []) if str(b).strip()],
         synonyms=[s for s in (body.synonyms or []) if str(s).strip()],
         atc_code=(body.atc_code or "").strip() or None,
+        mah=(body.mah or "").strip() or None,
+        markets=[m for m in (body.markets or []) if str(m).strip()],
         is_active=True,
         primary_reviewer_id=body.primary_reviewer_id,
     )
@@ -711,6 +726,138 @@ def update_product(
     db.commit()
     db.refresh(product)
     return product
+
+
+def _source_out(db: Session, source: LiteratureSource) -> LiteratureSourceOut:
+    count = db.scalar(
+        select(func.count())
+        .select_from(Article)
+        .where(Article.literature_source_id == source.id)
+    ) or 0
+    return LiteratureSourceOut(
+        id=source.id,
+        name=source.name,
+        kind=source.kind,
+        provider=source.provider,
+        access_model=source.access_model,
+        retrieval=source.retrieval,
+        coverage=source.coverage,
+        is_enabled=source.is_enabled,
+        article_count=count,
+    )
+
+
+@router.get("/literature-sources", response_model=list[LiteratureSourceOut])
+def list_literature_sources(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> list[LiteratureSourceOut]:
+    sources = db.scalars(select(LiteratureSource).order_by(LiteratureSource.id)).all()
+    return [_source_out(db, source) for source in sources]
+
+
+@router.post("/literature-sources", response_model=LiteratureSourceOut, status_code=201)
+def create_literature_source(
+    body: LiteratureSourceIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(Role.PV_LEAD, Role.ADMIN)),
+) -> LiteratureSourceOut:
+    existing = db.scalar(
+        select(LiteratureSource).where(func.lower(LiteratureSource.name) == body.name.strip().lower())
+    )
+    if existing:
+        raise HTTPException(409, f"Source '{body.name}' already exists")
+    source = LiteratureSource(**body.model_dump())
+    source.name = source.name.strip()
+    db.add(source)
+    db.flush()
+    log_event(
+        db,
+        actor=user.email,
+        action="literature_source_created",
+        entity_type="literature_source",
+        entity_id=source.id,
+        payload={"name": source.name, "provider": source.provider},
+    )
+    db.commit()
+    db.refresh(source)
+    return _source_out(db, source)
+
+
+@router.patch("/literature-sources/{source_id}", response_model=LiteratureSourceOut)
+def update_literature_source(
+    source_id: int,
+    body: LiteratureSourceUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(Role.PV_LEAD, Role.ADMIN)),
+) -> LiteratureSourceOut:
+    source = db.get(LiteratureSource, source_id)
+    if not source:
+        raise HTTPException(404, "Literature source not found")
+    changes = body.model_dump(exclude_unset=True)
+    # Enabling a source the pilot has no retrieval path for would silently
+    # promise coverage that does not exist, so it has to be refused.
+    if changes.get("is_enabled") and not (
+        changes.get("retrieval") or source.retrieval
+    ):
+        raise HTTPException(
+            400,
+            f"'{source.name}' cannot be enabled without a retrieval method. "
+            "Embase and local journals are later-phase and have no connector.",
+        )
+    for field, value in changes.items():
+        setattr(source, field, value)
+    log_event(
+        db,
+        actor=user.email,
+        action="literature_source_updated",
+        entity_type="literature_source",
+        entity_id=source.id,
+        payload=jsonable_encoder(changes),
+    )
+    db.commit()
+    db.refresh(source)
+    return _source_out(db, source)
+
+
+@router.get("/literature-sources/connection", response_model=SourceConnectionOut)
+def source_connection_health(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> SourceConnectionOut:
+    """PubMed connection health, read from persisted run history.
+
+    Deliberately not read from the in-process metrics counters: those reset on
+    restart, and "0 failures" for the wrong reason is worse than no number.
+    """
+    settings = get_settings()
+    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+    last_ok = db.scalar(
+        select(func.max(SearchRun.completed_at)).where(
+            SearchRun.status == SearchRunStatus.COMPLETED
+        )
+    )
+    failures = db.scalar(
+        select(func.count())
+        .select_from(SearchRun)
+        .where(SearchRun.status == SearchRunStatus.FAILED, SearchRun.created_at >= cutoff)
+    ) or 0
+    api_key = (settings.ncbi_api_key or "").strip()
+    email = (settings.ncbi_email or "").strip()
+    # NCBI's documented ceiling: 3 requests/second without a key, 10 with one.
+    return SourceConnectionOut(
+        source_name="PubMed",
+        contact_email=email or None,
+        # The default is a placeholder address, which NCBI policy does not accept.
+        contact_email_configured=bool(email) and email != "dev@example.com",
+        api_key_configured=bool(api_key),
+        api_key_hint=f"••••••••{api_key[-4:]}" if len(api_key) >= 4 else None,
+        rate_limit_per_second=10 if api_key else 3,
+        retry_policy="3 attempts, exponential backoff",
+        last_successful_call=last_ok,
+        failures_last_7d=failures,
+        is_healthy=failures == 0 and last_ok is not None,
+    )
 
 
 @router.get("/search-strings", response_model=list[SearchStringOut])
@@ -1362,9 +1509,30 @@ def queue_stats(
     )
 
 
-@router.get("/articles", response_model=list[ArticleListItem])
-def list_articles(
-    queue: Optional[QueueType] = None,
+def _folder_condition(folder: str) -> Any:
+    """Turn a workspace folder key into a SQL predicate.
+
+    Folders are *views* over status plus signal tag, not a one-to-one mapping
+    onto :class:`ArticleStatus` — "potential signals" deliberately cuts across
+    workflow state. Deriving the predicate from ``WORKSPACE_FOLDERS`` keeps the
+    rail counts and the table contents from drifting apart.
+    """
+    spec = WORKSPACE_FOLDERS.get(folder)
+    if spec is None:
+        raise HTTPException(400, f"Unknown workspace folder '{folder}'")
+    if "signal_tags" in spec:
+        return Article.id.in_(
+            select(ArticleSignalTag.article_id).where(
+                ArticleSignalTag.tag.in_(spec["signal_tags"])
+            )
+        )
+    return Article.status.in_(spec["statuses"])
+
+
+def _build_article_query(
+    *,
+    user: User,
+    folder: Optional[str] = None,
     status: Optional[ArticleStatus] = None,
     product_id: Optional[int] = None,
     active_ingredient_id: Optional[int] = None,
@@ -1372,22 +1540,33 @@ def list_articles(
     date_to: Optional[date] = None,
     literature_source_id: Optional[int] = None,
     classification: Optional[Classification] = None,
+    classification_group: Optional[str] = None,
+    screened_only: bool = False,
+    status_group: Optional[str] = None,
     priority: Optional[Priority] = None,
     submission_status: Optional[SubmissionStatus] = None,
-    review_status: Optional[str] = Query(
-        default=None, pattern="^(open|closed|all)$"
-    ),
+    review_status: Optional[str] = None,
     q: Optional[str] = None,
-    open_only: bool = Query(default=True),
-    include_archive: bool = Query(default=False),
-    overdue_only: bool = Query(default=False),
-    mine_only: bool = Query(default=False),
+    open_only: bool = True,
+    include_archive: bool = False,
+    mine_only: bool = False,
     assignee_id: Optional[int] = None,
     signal_status: Optional[SignalStatus] = None,
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-) -> list[ArticleListItem]:
+) -> Any:
+    """Every SQL-expressible article filter, in one place.
+
+    ``queue`` and ``overdue_only`` are deliberately not handled here: both read
+    the active triage assignment, which the list endpoint resolves per row.
+    """
     query = select(Article)
+    if folder:
+        query = query.where(_folder_condition(folder))
+        # A folder already pins the workflow state, so the open/archive
+        # defaults must not narrow it further — that would make the Archived
+        # and Submitted folders permanently empty.
+        open_only = False
+        include_archive = False
+        review_status = review_status if review_status in ("open", "closed") else None
     if product_id:
         query = query.where(Article.product_id == product_id)
     if active_ingredient_id:
@@ -1412,6 +1591,30 @@ def list_articles(
             func.coalesce(Article.human_classification, Article.ai_classification)
             == classification
         )
+    if classification_group == "relevant":
+        query = query.where(
+            func.coalesce(Article.human_classification, Article.ai_classification).in_(
+                [
+                    Classification.POTENTIALLY_RELEVANT,
+                    Classification.POTENTIAL_SAFETY_SIGNAL,
+                    Classification.ADVERSE_EVENT_RELATED,
+                    Classification.PRODUCT_QUALITY_RELATED,
+                ]
+            )
+        )
+    if screened_only is True:
+        query = query.where(Article.ai_classification.is_not(None))
+    if status_group == "awaiting_review":
+        query = query.where(
+            Article.status.in_(
+                [
+                    ArticleStatus.NEW_ALERT,
+                    ArticleStatus.AWAITING_REVIEW,
+                    ArticleStatus.QC_SAMPLE,
+                ]
+            )
+        )
+        open_only = False
     if priority:
         query = query.where(Article.priority == priority)
     if submission_status:
@@ -1466,6 +1669,61 @@ def list_articles(
         query = query.where(
             or_(Article.title.ilike(like), Article.pmid.ilike(like), Article.abstract.ilike(like))
         )
+    return query
+
+
+@router.get("/articles", response_model=list[ArticleListItem])
+def list_articles(
+    folder: Optional[str] = None,
+    queue: Optional[QueueType] = None,
+    status: Optional[ArticleStatus] = None,
+    product_id: Optional[int] = None,
+    active_ingredient_id: Optional[int] = None,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    literature_source_id: Optional[int] = None,
+    classification: Optional[Classification] = None,
+    classification_group: Optional[str] = Query(default=None, pattern="^relevant$"),
+    screened_only: bool = Query(default=False),
+    status_group: Optional[str] = Query(default=None, pattern="^awaiting_review$"),
+    priority: Optional[Priority] = None,
+    submission_status: Optional[SubmissionStatus] = None,
+    review_status: Optional[str] = Query(
+        default=None, pattern="^(open|closed|all)$"
+    ),
+    q: Optional[str] = None,
+    open_only: bool = Query(default=True),
+    include_archive: bool = Query(default=False),
+    overdue_only: bool = Query(default=False),
+    mine_only: bool = Query(default=False),
+    assignee_id: Optional[int] = None,
+    signal_status: Optional[SignalStatus] = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> list[ArticleListItem]:
+    query = _build_article_query(
+        user=user,
+        folder=folder,
+        status=status,
+        product_id=product_id,
+        active_ingredient_id=active_ingredient_id,
+        date_from=date_from,
+        date_to=date_to,
+        literature_source_id=literature_source_id,
+        classification=classification,
+        classification_group=classification_group,
+        screened_only=screened_only,
+        status_group=status_group,
+        priority=priority,
+        submission_status=submission_status,
+        review_status=review_status,
+        q=q,
+        open_only=open_only,
+        include_archive=include_archive,
+        mine_only=mine_only,
+        assignee_id=assignee_id,
+        signal_status=signal_status,
+    )
 
     articles = list(db.scalars(query.order_by(Article.id.desc()).limit(300)).all())
     items: list[ArticleListItem] = []
@@ -1537,8 +1795,73 @@ def list_articles(
                 ),
             )
         )
-    items.sort(key=lambda x: (x.sla_due_at is None, x.sla_due_at or datetime.max))
+    # Severity is no longer a folder, so it has to earn its place in the sort:
+    # P1 first, then soonest due. Without the priority key an overdue P3 would
+    # outrank a P1 that still has hours left on the clock.
+    priority_rank = {Priority.P1: 0, Priority.P2: 1, Priority.P3: 2}
+    items.sort(
+        key=lambda x: (
+            priority_rank.get(x.priority, 3),
+            x.sla_due_at is None,
+            x.sla_due_at or datetime.max,
+        )
+    )
     return items
+
+
+@router.get("/workspace/folders")
+def workspace_folders(
+    queue: Optional[QueueType] = None,
+    product_id: Optional[int] = None,
+    active_ingredient_id: Optional[int] = None,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    literature_source_id: Optional[int] = None,
+    classification: Optional[Classification] = None,
+    classification_group: Optional[str] = Query(default=None, pattern="^relevant$"),
+    screened_only: bool = Query(default=False),
+    status_group: Optional[str] = Query(default=None, pattern="^awaiting_review$"),
+    priority: Optional[Priority] = None,
+    submission_status: Optional[SubmissionStatus] = None,
+    q: Optional[str] = None,
+    mine_only: bool = Query(default=False),
+    assignee_id: Optional[int] = None,
+    signal_status: Optional[SignalStatus] = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict:
+    """The nine workspace folders with counts under the active filters.
+
+    The counts answer "how many rows would this folder show me right now",
+    so they take the same filter set as the list rather than being global
+    totals that disagree with the table underneath them.
+    """
+    folders = []
+    for key, spec in WORKSPACE_FOLDERS.items():
+        query = _build_article_query(
+            user=user,
+            folder=key,
+            product_id=product_id,
+            active_ingredient_id=active_ingredient_id,
+            date_from=date_from,
+            date_to=date_to,
+            literature_source_id=literature_source_id,
+            classification=classification,
+            classification_group=classification_group,
+            screened_only=screened_only,
+            status_group=status_group,
+            priority=priority,
+            submission_status=submission_status,
+            q=q,
+            mine_only=mine_only,
+            assignee_id=assignee_id,
+            signal_status=signal_status,
+        )
+        count = db.scalar(
+            select(func.count()).select_from(query.subquery())
+        ) or 0
+        folders.append({"key": key, "label": spec["label"], "count": count})
+    return {"scope": "mine" if mine_only else "all", "folders": folders}
 
 
 @router.get("/articles/{article_id}", response_model=ArticleDetail)
@@ -1554,16 +1877,29 @@ def get_article(
         max(a.screening_results, key=lambda s: s.id) if a.screening_results else None
     )
     triage = next((t for t in a.triage_assignments if t.is_active), None)
+    reviewer_ids = {d.reviewer_id for d in a.review_decisions}
+    reviewers = (
+        {
+            reviewer.id: reviewer.full_name
+            for reviewer in db.scalars(
+                select(User).where(User.id.in_(reviewer_ids))
+            ).all()
+        }
+        if reviewer_ids
+        else {}
+    )
     decisions = [
         {
             "id": d.id,
             "action": d.action.value,
             "rationale": d.rationale,
             "reviewer_id": d.reviewer_id,
+            "reviewer_name": reviewers.get(d.reviewer_id),
             "identifiable_patient": d.identifiable_patient,
             "suspect_drug": d.suspect_drug,
             "adverse_event": d.adverse_event,
             "identifiable_reporter": d.identifiable_reporter,
+            "supporting_documents": d.supporting_documents or [],
             "created_at": d.created_at.isoformat() if d.created_at else None,
         }
         for d in sorted(a.review_decisions, key=lambda d: d.id, reverse=True)
@@ -1589,6 +1925,12 @@ def get_article(
         }
         for e in audit
     ]
+    appearance = max(a.appearances, key=lambda row: row.id) if a.appearances else None
+    search_run = appearance.search_run if appearance else None
+    regulatory = db.scalar(
+        select(RegulatoryRecord).where(RegulatoryRecord.article_id == a.id)
+    )
+    assignee = db.get(User, a.assignee_id) if a.assignee_id else None
     return ArticleDetail(
         id=a.id,
         pmid=a.pmid,
@@ -1606,6 +1948,7 @@ def get_article(
         product_name=a.product.name if a.product else None,
         active_ingredients=a.product.active_ingredients if a.product else [],
         assignee_id=a.assignee_id,
+        assignee_name=assignee.full_name if assignee else None,
         signal_status=a.signal_status,
         priority=a.priority,
         ai_classification=a.ai_classification,
@@ -1613,6 +1956,17 @@ def get_article(
         signal_tags=[tag.tag.value for tag in a.signal_tags],
         literature_source_id=a.literature_source_id,
         literature_source_name=a.literature_source.name if a.literature_source else None,
+        search_date=(
+            search_run.completed_at or search_run.started_at or search_run.created_at
+            if search_run
+            else None
+        ),
+        search_terms=search_run.query_snapshot if search_run else None,
+        submission_status=(
+            regulatory.decision
+            if regulatory
+            else SubmissionStatus.PENDING_DECISION
+        ),
         latest_screening=screening,
         active_triage=triage,
         decisions=decisions,
@@ -1696,6 +2050,10 @@ def submit_review(
     if not a:
         raise HTTPException(404, "Article not found")
 
+    previous_status = a.status
+    previous_classification = a.human_classification
+    previous_signal_status = a.signal_status
+
     decision = ReviewDecision(
         article_id=a.id,
         reviewer_id=user.id,
@@ -1713,6 +2071,7 @@ def submit_review(
         event_terms=body.event_terms,
         suspect_products=body.suspect_products,
         override_notes=body.override_notes,
+        supporting_documents=body.supporting_documents,
     )
     db.add(decision)
     db.flush()
@@ -1750,16 +2109,45 @@ def submit_review(
     elif body.action == DecisionAction.MARK_INVALID:
         a.status = ArticleStatus.EXCEPTION
         a.human_classification = Classification.INVALID
+        _set_signal_tag(db, a, SignalTag.INVALID, user)
+        create_alert(
+            db,
+            user_id=a.assignee_id or user.id,
+            article_id=a.id,
+            alert_type="invalid_result",
+            priority="normal",
+            title="Report marked invalid",
+            message=f"{a.title} — {body.rationale or 'Human review marked this report invalid'}",
+            dedupe_key=f"invalid-result:{a.id}:{decision.id}",
+        )
     elif body.action == DecisionAction.MARK_DUPLICATE:
         a.status = ArticleStatus.ARCHIVED
         a.human_classification = Classification.DUPLICATE
+        _set_signal_tag(db, a, SignalTag.DUPLICATE, user)
     elif body.action == DecisionAction.MARK_NOT_RELEVANT:
         a.status = ArticleStatus.ARCHIVED
         a.human_classification = Classification.IRRELEVANT
+        _set_signal_tag(db, a, SignalTag.NOT_RELEVANT, user)
     elif body.action == DecisionAction.PREPARE_FOR_SUBMISSION:
         a.status = ArticleStatus.APPROVED_FOR_SUBMISSION
+        _set_signal_tag(db, a, SignalTag.SUBMISSION_REQUIRED, user)
+        regulatory = _regulatory_record(db, a.id)
+        if regulatory is None:
+            regulatory = RegulatoryRecord(article_id=a.id)
+            db.add(regulatory)
+        regulatory.decision = SubmissionStatus.APPROVED_FOR_SUBMISSION
+        regulatory.decision_reason = body.rationale
+        regulatory.updated_by = user.id
     elif body.action == DecisionAction.RETAIN_INTERNALLY:
         a.status = ArticleStatus.NOT_FOR_SUBMISSION
+        _set_signal_tag(db, a, SignalTag.SUBMISSION_NOT_REQUIRED, user)
+        regulatory = _regulatory_record(db, a.id)
+        if regulatory is None:
+            regulatory = RegulatoryRecord(article_id=a.id)
+            db.add(regulatory)
+        regulatory.decision = SubmissionStatus.RETAINED_INTERNALLY
+        regulatory.decision_reason = body.rationale
+        regulatory.updated_by = user.id
     elif body.action == DecisionAction.CLOSE_REPORT:
         a.status = ArticleStatus.ARCHIVED
 
@@ -1785,12 +2173,126 @@ def submit_review(
         action=f"review_{body.action.value}",
         entity_type="article",
         entity_id=a.id,
-        payload={"rationale": body.rationale},
+        payload={
+            "rationale": body.rationale,
+            "previous_status": previous_status.value,
+            "new_status": a.status.value,
+            "previous_classification": (
+                previous_classification.value if previous_classification else None
+            ),
+            "new_classification": (
+                a.human_classification.value if a.human_classification else None
+            ),
+            "previous_signal_status": previous_signal_status.value,
+            "new_signal_status": a.signal_status.value,
+        },
     )
     db.commit()
     db.refresh(decision)
     metrics.reviews += 1
     return decision
+
+
+@router.put("/articles/{article_id}/signal-tags")
+def set_signal_tags(
+    article_id: int,
+    body: SignalTagsIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict:
+    """Replace an article's signal tags with the reviewer's selection.
+
+    The wireframe's tag panel is a multi-select, so this takes the whole set
+    rather than a single toggle — otherwise clearing a tag needs a second verb.
+    ``confirmed_signal`` stays gated through :func:`_set_signal_tag`.
+    """
+    a = db.get(Article, article_id)
+    if not a:
+        raise HTTPException(404, "Article not found")
+    try:
+        wanted = {SignalTag(tag) for tag in body.tags}
+    except ValueError as exc:
+        raise HTTPException(400, f"Unknown signal tag: {exc}") from exc
+
+    current = {row.tag: row for row in a.signal_tags}
+    for tag in wanted - set(current):
+        _set_signal_tag(db, a, tag, user)
+    for tag in set(current) - wanted:
+        # Removing a confirmation is as consequential as making one.
+        if tag == SignalTag.CONFIRMED_SIGNAL and user.role not in (
+            Role.PV_LEAD,
+            Role.ADMIN,
+        ):
+            raise HTTPException(403, "PV lead required to withdraw a confirmed signal")
+        db.delete(current[tag])
+
+    # Keep the denormalised signal_status in step with the tags, so the
+    # workspace filter and the folder counts agree with the detail screen.
+    if SignalTag.CONFIRMED_SIGNAL in wanted:
+        a.signal_status = SignalStatus.CONFIRMED
+    elif SignalTag.POTENTIAL_SIGNAL in wanted:
+        a.signal_status = SignalStatus.POTENTIAL
+    elif a.signal_status in (SignalStatus.CONFIRMED, SignalStatus.POTENTIAL):
+        a.signal_status = SignalStatus.NOT_ASSESSED
+
+    log_event(
+        db,
+        actor=user.email,
+        action="signal_tags_set",
+        entity_type="article",
+        entity_id=a.id,
+        payload={
+            "tags": sorted(tag.value for tag in wanted),
+            "previous": sorted(tag.value for tag in current),
+        },
+    )
+    db.commit()
+    db.refresh(a)
+    return {
+        "article_id": a.id,
+        "signal_tags": [row.tag.value for row in a.signal_tags],
+        "signal_status": a.signal_status.value,
+    }
+
+
+@router.patch("/articles/{article_id}/classification")
+def set_classification(
+    article_id: int,
+    body: ClassificationIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict:
+    """Record the human classification.
+
+    The AI's proposal is written once by the pipeline and never overwritten —
+    both values are retained so an inspector can see what the model said and
+    what the reviewer decided.
+    """
+    a = db.get(Article, article_id)
+    if not a:
+        raise HTTPException(404, "Article not found")
+    previous = a.human_classification
+    a.human_classification = body.classification
+    log_event(
+        db,
+        actor=user.email,
+        action="classification_set",
+        entity_type="article",
+        entity_id=a.id,
+        payload={
+            "classification": body.classification.value,
+            "previous": previous.value if previous else None,
+            "ai_proposed": a.ai_classification.value if a.ai_classification else None,
+            "rationale": body.rationale,
+        },
+    )
+    db.commit()
+    db.refresh(a)
+    return {
+        "article_id": a.id,
+        "ai_classification": a.ai_classification.value if a.ai_classification else None,
+        "human_classification": a.human_classification.value,
+    }
 
 
 @router.post("/articles/{article_id}/rescore")
@@ -2014,12 +2516,12 @@ def dashboard_metrics(
         ]
     metrics = [
         {"key": "total_articles", "label": "Total articles identified", "count": count(), "filter": {"review_status": "all"}},
-        {"key": "articles_screened", "label": "Articles screened", "count": count(Article.ai_classification.is_not(None)), "filter": {"review_status": "all", "classification": "potentially_relevant"}},
-        {"key": "relevant_articles", "label": "Relevant articles", "count": count(effective_classification.in_(relevant)), "filter": {"classification": "potentially_relevant", "review_status": "all"}},
+        {"key": "articles_screened", "label": "Articles screened", "count": count(Article.ai_classification.is_not(None)), "filter": {"review_status": "all", "screened_only": True}},
+        {"key": "relevant_articles", "label": "Relevant articles", "count": count(effective_classification.in_(relevant)), "filter": {"classification_group": "relevant", "review_status": "all"}},
         {"key": "irrelevant_articles", "label": "Irrelevant articles", "count": count(effective_classification == Classification.IRRELEVANT), "filter": {"classification": "irrelevant", "review_status": "all"}},
         {"key": "potential_signals", "label": "Potential signals", "count": count(Article.signal_status == SignalStatus.POTENTIAL), "filter": {"signal_status": SignalStatus.POTENTIAL.value, "review_status": "all"}},
         {"key": "invalid_or_failed", "label": "Invalid or failed records", "count": count(or_(Article.status == ArticleStatus.EXCEPTION, effective_classification == Classification.INVALID)), "filter": {"status": ArticleStatus.EXCEPTION.value}},
-        {"key": "awaiting_review", "label": "Reports awaiting review", "count": count(Article.status.in_([ArticleStatus.NEW_ALERT, ArticleStatus.AWAITING_REVIEW, ArticleStatus.QC_SAMPLE])), "filter": {"review_status": "open"}},
+        {"key": "awaiting_review", "label": "Reports awaiting review", "count": count(Article.status.in_([ArticleStatus.NEW_ALERT, ArticleStatus.AWAITING_REVIEW, ArticleStatus.QC_SAMPLE])), "filter": {"status_group": "awaiting_review", "review_status": "all"}},
         {"key": "approved_for_submission", "label": "Reports approved for submission", "count": count(Article.status == ArticleStatus.APPROVED_FOR_SUBMISSION), "filter": {"submission_status": SubmissionStatus.APPROVED_FOR_SUBMISSION.value}},
         {"key": "retained_without_submission", "label": "Reports retained without submission", "count": count(Article.status == ArticleStatus.NOT_FOR_SUBMISSION), "filter": {"submission_status": SubmissionStatus.RETAINED_INTERNALLY.value}},
         {"key": "submitted", "label": "Reports submitted", "count": count(Article.status == ArticleStatus.SUBMITTED), "filter": {"submission_status": SubmissionStatus.SUBMITTED.value}},
@@ -2125,11 +2627,10 @@ def get_alert_settings(
     alerts. This tells the UI what is available now and makes later channels an
     explicit extension instead of a misleading toggle.
     """
-    settings = get_settings()
     return AlertSettingsOut(
-        enabled_channels=["in_app"] + (["email"] if settings.notify_email_enabled else []),
-        available_channels=["in_app", "email"],
-        email_configured=bool(settings.notify_email_enabled and settings.notify_smtp_host),
+        enabled_channels=["in_app"],
+        available_channels=["in_app"],
+        email_configured=False,
     )
 
 
@@ -2218,18 +2719,17 @@ def generate_regulatory_article(
 
 
 @router.get(
-    "/regulatory/articles/{article_id}/record", response_model=RegulatoryRecordOut
+    "/regulatory/articles/{article_id}/record",
+    response_model=Optional[RegulatoryRecordOut],
 )
 def get_regulatory_record(
     article_id: int,
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
-) -> RegulatoryRecord:
+) -> RegulatoryRecord | None:
     if not db.get(Article, article_id):
         raise HTTPException(404, "Article not found")
     record = _regulatory_record(db, article_id)
-    if not record:
-        raise HTTPException(404, "No regulatory decision has been recorded")
     return record
 
 
@@ -2470,25 +2970,195 @@ async def run_evaluation(
 # ── Audit ─────────────────────────────────────────────────────────────
 
 
-@router.get("/audit", response_model=list[AuditOut])
-def list_audit(
-    entity_type: Optional[str] = None,
-    entity_id: Optional[str] = None,
-    action: Optional[str] = None,
-    limit: int = Query(default=100, le=500),
-    db: Session = Depends(get_db),
-    # The audit trail is a controlled record covering every reviewer's actions,
-    # so it is an oversight function rather than something a reviewer browses.
-    _: User = Depends(require_roles(Role.PV_LEAD, Role.ADMIN)),
-) -> list[AuditEvent]:
-    q = select(AuditEvent).order_by(AuditEvent.id.desc()).limit(limit)
+def _audit_query(
+    *,
+    actor: Optional[str],
+    entity_type: Optional[str],
+    entity_id: Optional[str],
+    action: Optional[str],
+    created_from: Optional[date],
+    created_to: Optional[date],
+) -> Any:
+    q = select(AuditEvent).order_by(AuditEvent.id.desc())
+    if actor:
+        q = q.where(AuditEvent.actor == actor)
     if entity_type:
         q = q.where(AuditEvent.entity_type == entity_type)
     if entity_id:
         q = q.where(AuditEvent.entity_id == entity_id)
     if action:
         q = q.where(AuditEvent.action == action)
-    return list(db.scalars(q).all())
+    if created_from:
+        q = q.where(AuditEvent.created_at >= datetime.combine(created_from, datetime.min.time()))
+    if created_to:
+        # Inclusive of the whole end day, which is what a date picker implies.
+        q = q.where(AuditEvent.created_at < datetime.combine(created_to + timedelta(days=1), datetime.min.time()))
+    return q
+
+
+@router.get("/audit", response_model=list[AuditOut])
+def list_audit(
+    actor: Optional[str] = None,
+    entity_type: Optional[str] = None,
+    entity_id: Optional[str] = None,
+    action: Optional[str] = None,
+    created_from: Optional[date] = None,
+    created_to: Optional[date] = None,
+    limit: int = Query(default=100, le=500),
+    db: Session = Depends(get_db),
+    # The audit trail is a controlled record covering every reviewer's actions,
+    # so it is an oversight function rather than something a reviewer browses.
+    _: User = Depends(require_roles(Role.PV_LEAD, Role.ADMIN)),
+) -> list[AuditEvent]:
+    q = _audit_query(
+        actor=actor,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        action=action,
+        created_from=created_from,
+        created_to=created_to,
+    )
+    return list(db.scalars(q.limit(limit)).all())
+
+
+@router.get("/audit/facets")
+def audit_facets(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(Role.PV_LEAD, Role.ADMIN)),
+) -> dict:
+    """Distinct actors, actions and entity types, for the filter dropdowns."""
+    return {
+        "actors": sorted(db.scalars(select(AuditEvent.actor).distinct()).all()),
+        "actions": sorted(db.scalars(select(AuditEvent.action).distinct()).all()),
+        "entity_types": sorted(
+            db.scalars(select(AuditEvent.entity_type).distinct()).all()
+        ),
+    }
+
+
+@router.get("/audit/export")
+def export_audit(
+    actor: Optional[str] = None,
+    entity_type: Optional[str] = None,
+    entity_id: Optional[str] = None,
+    action: Optional[str] = None,
+    created_from: Optional[date] = None,
+    created_to: Optional[date] = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(Role.PV_LEAD, Role.ADMIN)),
+) -> Response:
+    """Download the filtered audit trail as CSV.
+
+    Inspection readiness is a stated selling point, so the log has to be able
+    to leave the screen. The export is itself an audited event.
+    """
+    events = list(
+        db.scalars(
+            _audit_query(
+                actor=actor,
+                entity_type=entity_type,
+                entity_id=entity_id,
+                action=action,
+                created_from=created_from,
+                created_to=created_to,
+            ).limit(10000)
+        ).all()
+    )
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(["timestamp", "actor", "action", "entity_type", "entity_id", "payload"])
+    for event in events:
+        writer.writerow(
+            [
+                event.created_at.isoformat() if event.created_at else "",
+                event.actor,
+                event.action,
+                event.entity_type,
+                event.entity_id or "",
+                json.dumps(event.payload or {}, sort_keys=True),
+            ]
+        )
+    log_event(
+        db,
+        actor=user.email,
+        action="audit_exported",
+        entity_type="audit",
+        entity_id=None,
+        payload={"row_count": len(events)},
+    )
+    db.commit()
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return Response(
+        content=buffer.getvalue(),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f'attachment; filename="litmon_audit_{stamp}.csv"'
+        },
+    )
+
+
+@router.get("/exceptions/summary", response_model=ExceptionSummaryOut)
+def exception_summary(
+    product_id: Optional[int] = None,
+    mine_only: bool = Query(default=False),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> ExceptionSummaryOut:
+    """Exception-queue counts, itemised by cause.
+
+    The causes stay separate rather than collapsing into one "invalid" bucket:
+    the partner has not settled what invalid means, and regrouping later is
+    cheap only if the underlying distinction was never thrown away.
+    """
+    query = (
+        select(Article.exception_cause, func.count(Article.id))
+        .where(Article.status == ArticleStatus.EXCEPTION)
+        .group_by(Article.exception_cause)
+    )
+    if product_id:
+        query = query.where(Article.product_id == product_id)
+    if mine_only:
+        query = query.where(Article.assignee_id == user.id)
+    counts = {cause: total for cause, total in db.execute(query).all()}
+
+    labels = {
+        ExceptionCause.FULL_TEXT_UNAVAILABLE: "Full text not retrievable",
+        ExceptionCause.INSUFFICIENT_INFORMATION: "Extraction returned insufficient information",
+        ExceptionCause.SOURCE_PARSE_ERROR: "Source record could not be parsed",
+        ExceptionCause.SEARCH_FAILED: "Search failed after retries",
+        ExceptionCause.EXTRACTION_FAILED: "Extraction failed",
+    }
+    causes = []
+    for cause, label in labels.items():
+        total = counts.get(cause, 0)
+        alerted = db.scalar(
+            select(func.count())
+            .select_from(Alert)
+            .where(Alert.alert_type == f"exception_{cause.value}")
+        ) or 0
+        causes.append(
+            ExceptionCauseCount(
+                cause=cause.value, label=label, count=total, alerted=bool(alerted)
+            )
+        )
+    uncategorised = counts.get(None, 0)
+    if uncategorised:
+        causes.append(
+            ExceptionCauseCount(
+                cause="uncategorised",
+                label="Cause not recorded",
+                count=uncategorised,
+                alerted=False,
+            )
+        )
+    return ExceptionSummaryOut(
+        total=sum(counts.values()),
+        causes=causes,
+        notice=(
+            "Causes are held separately pending a definition of \"invalid\". "
+            "Anything the pipeline cannot complete lands here rather than being dropped."
+        ),
+    )
 
 
 # ── SLA / ops / jobs ──────────────────────────────────────────────────

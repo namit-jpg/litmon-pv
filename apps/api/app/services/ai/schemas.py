@@ -41,6 +41,20 @@ class ScreeningOutput(BaseModel):
         ]
     ] = Field(default_factory=list)
     summary_for_reviewer: str = ""
+    # Step-5 extraction fields. These are deliberately separate from the raw
+    # entities bag so they can be rendered consistently and validated by the
+    # regulatory workflow. Every value must be grounded in the supplied
+    # title/abstract; null is preferable to invention.
+    indication: str | None = None
+    dosage: str | None = None
+    outcome: str | None = None
+    seriousness: str | None = None
+    country_of_occurrence: str | None = None
+    reporter_type: str | None = None
+    concomitant_medication: str | None = None
+    article_excerpts: list[str] = Field(default_factory=list)
+    relevance_reason: str | None = None
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
 
     @property
     def composite(self) -> float:
