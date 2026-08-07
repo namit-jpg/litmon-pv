@@ -4,6 +4,10 @@ import { api, ArticleFilters, DashboardMetrics, DashboardSummary } from "../api"
 import { useAuth } from "../auth";
 import DashboardCharts from "../components/DashboardCharts";
 
+function formatRunAt(value: string | null) {
+  return value ? new Date(value).toLocaleString() : "—";
+}
+
 export default function DashboardPage() {
   const { user } = useAuth();
   // Reviewers carry a personal queue, so "My dashboard" is the useful default.
@@ -93,8 +97,8 @@ export default function DashboardPage() {
           </section>
           <section className="card">
             <h2>Search completion status</h2>
-            {metrics.search_completion_status.length === 0 ? <p className="muted">No product searches have run yet.</p> : (
-              <table className="table"><thead><tr><th>Product</th><th>Last status</th><th /></tr></thead><tbody>{metrics.search_completion_status.map((row) => <tr key={row.product_id}><td>{row.product_name}</td><td><span className="pill">{row.status}</span></td><td><Link className="btn ghost" to={workspaceLink(row.filter)}>Open results</Link></td></tr>)}</tbody></table>
+            {metrics.search_completion_status.length === 0 ? <p className="muted">No active monitored products are configured.</p> : (
+              <table className="table"><thead><tr><th>Product</th><th>Last status</th><th>Run</th><th>Last run</th><th /></tr></thead><tbody>{metrics.search_completion_status.map((row) => <tr key={row.product_id}><td>{row.product_name}</td><td><span className="pill">{row.status.replace(/_/g, " ")}</span></td><td>{row.origin || "—"}</td><td>{formatRunAt(row.last_run_at)}</td><td><Link className="btn ghost" to={workspaceLink(row.filter)}>Open results</Link></td></tr>)}</tbody></table>
             )}
           </section>
           <DashboardCharts summary={summary} />

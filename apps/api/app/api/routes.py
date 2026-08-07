@@ -2002,6 +2002,23 @@ def claim_article(
     return {"article_id": a.id, "assignee_id": user.id}
 
 
+def _require_confirmed_signal_preconditions(
+    db: Session, article: Article, user: User
+) -> None:
+    """Ensure a confirmation is made by the right person after a prior review."""
+    if user.role not in (Role.PV_LEAD, Role.ADMIN):
+        raise HTTPException(403, "PV lead required to confirm a signal")
+    prior_decision_id = db.scalar(
+        select(ReviewDecision.id)
+        .where(ReviewDecision.article_id == article.id)
+        .limit(1)
+    )
+    if prior_decision_id is None:
+        raise HTTPException(
+            409, "A review decision must be recorded before confirming a signal"
+        )
+
+
 def _set_signal_tag(
     db: Session, article: Article, tag: SignalTag, user: User
 ) -> ArticleSignalTag:
@@ -2012,17 +2029,7 @@ def _set_signal_tag(
     Tags are idempotent — re-applying one keeps the original attribution.
     """
     if tag == SignalTag.CONFIRMED_SIGNAL:
-        if user.role not in (Role.PV_LEAD, Role.ADMIN):
-            raise HTTPException(403, "PV lead required to confirm a signal")
-        has_decision = db.scalar(
-            select(func.count())
-            .select_from(ReviewDecision)
-            .where(ReviewDecision.article_id == article.id)
-        )
-        if not has_decision:
-            raise HTTPException(
-                409, "A review decision must be recorded before confirming a signal"
-            )
+        _require_confirmed_signal_preconditions(db, article, user)
 
     existing = db.scalar(
         select(ArticleSignalTag).where(
@@ -2049,6 +2056,11 @@ def submit_review(
     a = db.get(Article, article_id)
     if not a:
         raise HTTPException(404, "Article not found")
+
+    # Check before adding the confirmation decision. Otherwise that new row
+    # would satisfy the "prior human assessment" guard by itself.
+    if body.action == DecisionAction.CONFIRM_SIGNAL:
+        _require_confirmed_signal_preconditions(db, a, user)
 
     previous_status = a.status
     previous_classification = a.human_classification
@@ -2557,14 +2569,54 @@ def dashboard_metrics(
         source.id: source.name for source in db.scalars(select(LiteratureSource)).all()
     }
     search_rows = []
-    for schedule in db.scalars(select(SearchSchedule).where(SearchSchedule.is_active.is_(True))).all():
-        product = db.get(Product, schedule.product_id)
+    for product in db.scalars(
+        select(Product).where(Product.is_active.is_(True)).order_by(Product.name, Product.id)
+    ).all():
+        latest_run = db.scalar(
+            select(SearchRun)
+            .join(SearchString, SearchRun.search_string_id == SearchString.id)
+            .where(SearchString.product_id == product.id)
+            .order_by(SearchRun.created_at.desc(), SearchRun.id.desc())
+            .limit(1)
+        )
+        latest_schedule = db.scalar(
+            select(SearchSchedule)
+            .where(
+                SearchSchedule.product_id == product.id,
+                SearchSchedule.last_run_at.is_not(None),
+            )
+            .order_by(SearchSchedule.last_run_at.desc(), SearchSchedule.id.desc())
+            .limit(1)
+        )
+        if latest_run:
+            trigger = latest_run.triggered_by or ""
+            origin = (
+                "scheduled"
+                if trigger == "scheduler" or trigger.startswith("schedule:")
+                else "manual"
+            )
+            status = latest_run.status.value
+            last_run_at = (
+                latest_run.completed_at
+                or latest_run.started_at
+                or latest_run.created_at
+            )
+        elif latest_schedule:
+            origin = "scheduled"
+            status = latest_schedule.last_status or "not_run"
+            last_run_at = latest_schedule.last_run_at
+        else:
+            origin = None
+            status = "not_run"
+            last_run_at = None
         search_rows.append(
             {
-                "product_id": schedule.product_id,
-                "product_name": product.name if product else str(schedule.product_id),
-                "status": schedule.last_status or "not_run",
-                "filter": {"product_id": schedule.product_id, "review_status": "open"},
+                "product_id": product.id,
+                "product_name": product.name,
+                "status": status,
+                "origin": origin,
+                "last_run_at": last_run_at,
+                "filter": {"product_id": product.id, "review_status": "open"},
             }
         )
     return {

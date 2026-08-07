@@ -140,6 +140,7 @@ export default function ArticlePage() {
   const canConfirmSignal = ["pv_lead", "admin"].includes(
     user?.role || ""
   );
+  const hasPriorDecision = article.decisions.length > 0;
 
   return (
     <div className="article-layout detection-report">
@@ -282,7 +283,12 @@ export default function ArticlePage() {
             {canConfirmSignal && (
               <button
                 className="btn"
-                disabled={busy}
+                disabled={busy || !hasPriorDecision}
+                title={
+                  hasPriorDecision
+                    ? undefined
+                    : "Record a human review decision before confirming a signal."
+                }
                 onClick={() => act("confirm_signal")}
               >
                 Confirm signal
@@ -296,6 +302,11 @@ export default function ArticlePage() {
               Reject signal
             </button>
           </div>
+          {canConfirmSignal && !hasPriorDecision ? (
+            <p className="muted">
+              Record a human review decision before confirming a signal.
+            </p>
+          ) : null}
         </section>
 
         <section className="card">

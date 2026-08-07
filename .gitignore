@@ -30,6 +30,7 @@ backups/
 # Node
 apps/web/node_modules/
 apps/web/dist/
+*.tsbuildinfo
 npm-debug.log*
 yarn-error.log*
 

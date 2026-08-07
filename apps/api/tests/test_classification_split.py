@@ -21,6 +21,7 @@ from app.models import (
     AuditEvent,
     Product,
     RegulatoryRecord,
+    ReviewDecision,
     User,
 )
 from app.models.entities import (
@@ -30,6 +31,7 @@ from app.models.entities import (
     Classification,
     DecisionAction,
     Role,
+    SignalStatus,
     SignalTag,
     SubmissionStatus,
 )
@@ -132,6 +134,50 @@ def test_confirmed_signal_requires_a_recorded_decision():
     tag = _set_signal_tag(db, article, SignalTag.CONFIRMED_SIGNAL, lead)
     assert tag.tag == SignalTag.CONFIRMED_SIGNAL
     assert tag.is_ai_proposed is False
+
+
+def test_confirm_signal_action_requires_a_prior_decision_without_side_effects():
+    """The submitted confirmation may not count as the review it requires."""
+    db = session()
+    lead, _, article = _fixture(db, role=Role.PV_LEAD)
+
+    with pytest.raises(HTTPException) as exc:
+        submit_review(
+            article.id,
+            ReviewIn(action=DecisionAction.CONFIRM_SIGNAL, rationale="first action"),
+            db=db,
+            user=lead,
+        )
+    assert exc.value.status_code == 409
+    assert db.scalars(
+        select(ReviewDecision).where(ReviewDecision.article_id == article.id)
+    ).all() == []
+    assert db.scalars(
+        select(ArticleSignalTag).where(ArticleSignalTag.article_id == article.id)
+    ).all() == []
+    assert db.scalars(
+        select(AuditEvent).where(AuditEvent.action == "review_confirm_signal")
+    ).all() == []
+    assert article.status == ArticleStatus.AWAITING_REVIEW
+    assert article.signal_status == SignalStatus.NOT_ASSESSED
+
+    submit_review(
+        article.id,
+        ReviewIn(action=DecisionAction.MARK_POTENTIAL_SIGNAL, rationale="reviewed"),
+        db=db,
+        user=lead,
+    )
+    submit_review(
+        article.id,
+        ReviewIn(action=DecisionAction.CONFIRM_SIGNAL, rationale="confirmed"),
+        db=db,
+        user=lead,
+    )
+    assert article.status == ArticleStatus.UNDER_ASSESSMENT
+    assert article.signal_status == SignalStatus.CONFIRMED
+    assert SignalTag.CONFIRMED_SIGNAL in {
+        tag.tag for tag in article.signal_tags
+    }
 
 
 def test_signal_tags_are_idempotent():

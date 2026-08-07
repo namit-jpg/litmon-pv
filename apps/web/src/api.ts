@@ -308,6 +308,8 @@ export type DashboardMetrics = {
     product_id: number;
     product_name: string;
     status: string;
+    origin: "manual" | "scheduled" | null;
+    last_run_at: string | null;
     filter: ArticleFilters;
   }[];
 };

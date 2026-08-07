@@ -15,6 +15,7 @@
 | [CHANGELOG.md](CHANGELOG.md) | Everyone | Notable version history |
 | [thursday_pilot_plan.md](thursday_pilot_plan.md) | Historical reference | Superseded 6 August assignment-routing demo plan |
 | [phase3_4_manual_test.md](phase3_4_manual_test.md) | Demo team | Manual functional test for the completed MVP screens and workflows |
+| [e2e_computer_use_test_plan.md](e2e_computer_use_test_plan.md) | Browser-testing agents | Safe, evidence-driven end-to-end plan for a Computer Use agent |
 
 ## Status
 

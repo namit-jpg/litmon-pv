@@ -10,6 +10,7 @@ from sqlalchemy.pool import StaticPool
 
 import app.models  # noqa: F401
 from app.api.routes import (
+    dashboard_metrics,
     exception_summary,
     export_audit,
     list_articles,
@@ -27,7 +28,9 @@ from app.models import (
     LiteratureSource,
     Product,
     ReviewDecision,
+    SearchRun,
     SearchSchedule,
+    SearchString,
     User,
 )
 from app.models.entities import (
@@ -39,6 +42,7 @@ from app.models.entities import (
     Priority,
     Role,
     ScheduleFrequency,
+    SearchRunStatus,
     SignalStatus,
     SignalTag,
 )
@@ -250,6 +254,72 @@ def test_connection_health_reads_persisted_runs_not_process_counters():
     # No runs recorded yet, so it must not claim to be healthy.
     assert health.is_healthy is False
     assert health.rate_limit_per_second in (3, 10)
+
+
+def test_dashboard_search_completion_includes_manual_and_scheduled_runs():
+    """Coverage comes from persisted runs, not only active schedules."""
+    db = session()
+    lead, reviewer, manual_product, _ = fixture(db)
+    now = datetime.now(timezone.utc)
+    scheduled_product = Product(name="Scheduled Product", brands=[], synonyms=[])
+    schedule_only_product = Product(name="Schedule-only Product", brands=[], synonyms=[])
+    untouched_product = Product(name="Untouched Product", brands=[], synonyms=[])
+    db.add_all([scheduled_product, schedule_only_product, untouched_product])
+    db.flush()
+
+    manual_string = SearchString(
+        product_id=manual_product.id, query_text="manual query", is_active=True
+    )
+    scheduled_string = SearchString(
+        product_id=scheduled_product.id, query_text="scheduled query", is_active=True
+    )
+    db.add_all([manual_string, scheduled_string])
+    db.flush()
+    db.add_all(
+        [
+            SearchRun(
+                search_string_id=manual_string.id,
+                status=SearchRunStatus.COMPLETED,
+                query_snapshot="manual query",
+                triggered_by=reviewer.email,
+                started_at=now - timedelta(minutes=2),
+                completed_at=now - timedelta(minutes=1),
+                created_at=now - timedelta(minutes=2),
+            ),
+            SearchRun(
+                search_string_id=scheduled_string.id,
+                status=SearchRunStatus.FAILED,
+                query_snapshot="scheduled query",
+                triggered_by="schedule:7",
+                started_at=now - timedelta(minutes=4),
+                completed_at=now - timedelta(minutes=3),
+                created_at=now - timedelta(minutes=4),
+            ),
+            SearchSchedule(
+                product_id=schedule_only_product.id,
+                frequency=ScheduleFrequency.DAILY,
+                end_date=date.today() + timedelta(days=30),
+                next_run_at=now + timedelta(days=1),
+                last_run_at=now - timedelta(hours=1),
+                last_status="no_active_search_string",
+            ),
+        ]
+    )
+    db.flush()
+
+    result = dashboard_metrics(mine_only=False, db=db, user=lead)
+    rows = {row["product_name"]: row for row in result["search_completion_status"]}
+
+    assert rows[manual_product.name]["status"] == SearchRunStatus.COMPLETED.value
+    assert rows[manual_product.name]["origin"] == "manual"
+    assert rows[manual_product.name]["last_run_at"] is not None
+    assert rows[scheduled_product.name]["status"] == SearchRunStatus.FAILED.value
+    assert rows[scheduled_product.name]["origin"] == "scheduled"
+    assert rows[schedule_only_product.name]["status"] == "no_active_search_string"
+    assert rows[schedule_only_product.name]["origin"] == "scheduled"
+    assert rows[untouched_product.name]["status"] == "not_run"
+    assert rows[untouched_product.name]["origin"] is None
+    assert rows[untouched_product.name]["last_run_at"] is None
 
 
 # ── Signal tags and classification ────────────────────────────────────
