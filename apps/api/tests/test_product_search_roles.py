@@ -240,13 +240,20 @@ def test_drug_list_returns_a_bounded_opening_page():
     assert all("name" in d and "kind" in d for d in rows)
 
 
-def test_reviewer_is_blocked_from_ops_surfaces():
-    """These back the Ops/Audit/Admin tabs now hidden from reviewers."""
+def test_reviewer_is_blocked_from_ops_surfaces_but_can_sync_reference_data(monkeypatch):
+    """The picker exposes a one-time RxNorm download to reviewers."""
     c = _as(*REVIEWER)
     assert c.get("/api/audit").status_code == 403
     assert c.get("/api/jobs").status_code == 403
     assert c.get("/api/ops/metrics").status_code == 403
-    assert c.post("/api/drugs/sync").status_code == 403
+
+    from app.api import routes
+
+    async def no_network_sync(_db, *, actor):
+        return {"added": 0, "updated": 0, "total": 0}
+
+    monkeypatch.setattr(routes, "sync_catalog", no_network_sync)
+    assert c.post("/api/drugs/sync").status_code == 200
 
 
 def test_reviewer_keeps_access_to_their_own_work():

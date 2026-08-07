@@ -56,7 +56,7 @@ CSV columns: `pmid` (required), `title`, `abstract`, `journal`, `doi`, `pub_date
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/articles` | Query: `queue`, `status`, `product_id`, `mine_only`, `assignee_id`, `signal_status`, `open_only`, `include_archive`, `overdue_only`, `q` |
+| GET | `/api/articles` | Workspace query: `queue`, `status`, `product_id`, `active_ingredient_id`, `date_from`, `date_to`, `literature_source_id`, `classification`, `signal_status`, `submission_status`, `assignee_id`, `priority`, `review_status`, `mine_only`, `open_only`, `include_archive`, `overdue_only`, `q` |
 | GET | `/api/articles/{id}` | Detail + screening + triage + decisions + audit |
 | POST | `/api/articles/{id}/claim` | Assign to current user |
 | POST | `/api/articles/{id}/review` | Decision (see actions below) |
@@ -72,8 +72,14 @@ CSV columns: `pmid` (required), `title`, `abstract`, `journal`, `doi`, `pub_date
 - `defer_full_text`
 - `recall_to_review`
 - `mark_potential_signal`
-- `confirm_signal` (senior reviewer, PV lead, or admin)
+- `confirm_signal` (PV lead or admin, and only after a review decision exists)
 - `reject_signal`
+- `mark_invalid`
+- `mark_duplicate`
+- `mark_not_relevant`
+- `prepare_for_submission`
+- `retain_internally`
+- `close_report`
 
 Include explicit ICSR checklist booleans when confirming cases.
 
@@ -83,7 +89,7 @@ Include explicit ICSR checklist booleans when confirming cases.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/queues/stats` | Counts per queue/status |
+| GET | `/api/queues/stats` | Counts per queue/status plus `classification_counts` keyed by the nine-class taxonomy |
 | GET | `/api/sla/overdue` | Past-SLA open articles |
 | GET | `/api/sla/summary` | Overdue rollup |
 | POST | `/api/sla/notify` | Enqueue SLA check job |
@@ -95,7 +101,9 @@ Include explicit ICSR checklist booleans when confirming cases.
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/dashboard/summary?mine_only=true` | Assignment, unassigned triage, signal, ICSR, overdue, and product counts |
-| GET | `/api/alerts?unread_only=true` | Current user's persistent in-app alerts |
+| GET | `/api/dashboard/metrics?mine_only=true` | Step-12 measures, each with a workspace drill-through filter payload |
+| GET | `/api/alerts` | Current user's persistent alerts; supports `unread_only`, `priority`, `product_id`, `alert_type`, `created_from`, `created_to` |
+| GET | `/api/alerts/settings` | Pilot notification channels: in-app plus optionally configured email |
 | POST | `/api/alerts/{id}/read` | Mark one alert read |
 | POST | `/api/alerts/read-all` | Mark all current-user alerts read |
 | GET | `/api/presence` | Current reviewer presence, active work, and capacity |
@@ -103,7 +111,28 @@ Include explicit ICSR checklist booleans when confirming cases.
 
 ---
 
-## Export
+## Regulatory output, submission and export
+
+The regulatory workflow is a prototype. It never transmits to a gateway. A
+PV user generates a validated package, downloads it, uploads it manually, and
+records the resulting reference.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/regulatory/articles/{id}/validate` | Resolve the deployment-configured mandatory-field registry and report blocking omissions |
+| POST | `/api/regulatory/articles/{id}/generate` | Generate a versioned one-article E2B(R2)-shaped XML package; returns 422 while validation is blocked |
+| GET | `/api/regulatory/articles/{id}/versions` | List the article's generated regulatory package versions |
+| GET | `/api/regulatory/articles/{id}/record` | Read the recorded decision and manual gateway evidence |
+| POST | `/api/regulatory/articles/{id}/decision` | Record `approved_for_submission` or `retained_internally` with a reason |
+| POST | `/api/regulatory/articles/{id}/submission` | Record manual gateway, reference, timestamp and acknowledgement; only after an approved decision and generated package |
+
+The field registry is supplied through `REGULATORY_MANDATORY_FIELDS_JSON`. It
+is deliberately empty by default until the partner supplies an official CDSCO
+specification, so these new endpoints block generation rather than pretending
+the prototype is submission-ready.
+
+| Method | Path | Description |
+|--------|------|-------------|
 
 | Method | Path | Description |
 |--------|------|-------------|

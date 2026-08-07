@@ -13,6 +13,9 @@ from app.models.entities import (
     ScheduleFrequency,
     SearchRunStatus,
     SignalStatus,
+    Classification,
+    Priority,
+    SubmissionStatus,
     PresenceStatus,
 )
 
@@ -269,6 +272,17 @@ class ScreeningOut(BaseModel):
     icsr_criteria_match: float
     composite: float
     entities: dict[str, Any]
+    indication: Optional[str] = None
+    dosage: Optional[str] = None
+    outcome: Optional[str] = None
+    seriousness: Optional[str] = None
+    country_of_occurrence: Optional[str] = None
+    reporter_type: Optional[str] = None
+    concomitant_medication: Optional[str] = None
+    article_excerpts: list[Any] = []
+    relevance_reason: Optional[str] = None
+    confidence: Optional[float] = None
+    processed_at: Optional[datetime] = None
     icsr_precheck: dict[str, Any]
     reason_tags: list[Any]
     hard_rule_candidates: list[Any]
@@ -312,6 +326,13 @@ class ArticleListItem(BaseModel):
     assignee_id: Optional[int] = None
     assignee_name: Optional[str] = None
     signal_status: SignalStatus = SignalStatus.NOT_ASSESSED
+    priority: Priority = Priority.P3
+    ai_classification: Optional[Classification] = None
+    human_classification: Optional[Classification] = None
+    effective_classification: Optional[Classification] = None
+    signal_tags: list[str] = []
+    literature_source_id: Optional[int] = None
+    literature_source_name: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -334,6 +355,12 @@ class ArticleDetail(BaseModel):
     active_ingredients: list[ActiveIngredientOut] = []
     assignee_id: Optional[int]
     signal_status: SignalStatus = SignalStatus.NOT_ASSESSED
+    priority: Priority = Priority.P3
+    ai_classification: Optional[Classification] = None
+    human_classification: Optional[Classification] = None
+    signal_tags: list[str] = []
+    literature_source_id: Optional[int] = None
+    literature_source_name: Optional[str] = None
     latest_screening: Optional[ScreeningOut] = None
     active_triage: Optional[TriageOut] = None
     decisions: list[Any] = []
@@ -403,6 +430,7 @@ class QueueStats(BaseModel):
     not_case: int
     deferred: int = 0
     second_review: int = 0
+    classification_counts: dict[str, int] = Field(default_factory=dict)
 
 
 class ImportPmidsIn(BaseModel):
@@ -444,9 +472,68 @@ class AlertOut(BaseModel):
     article_id: Optional[int]
     alert_type: str
     priority: str
+    channels: list[Any] = []
     title: str
     message: str
     read_at: Optional[datetime]
     created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class AlertSettingsOut(BaseModel):
+    """Pilot notification capabilities, not an unscoped omnichannel contract."""
+
+    enabled_channels: list[str]
+    available_channels: list[str]
+    email_configured: bool
+
+
+class RegulatoryValidationField(BaseModel):
+    field: str
+    label: str
+    required: bool
+    value: Any = None
+    state: str
+
+
+class RegulatoryValidationOut(BaseModel):
+    article_id: int
+    rules_configured: bool
+    prototype_notice: str
+    fields: list[RegulatoryValidationField]
+    blocking_errors: list[str]
+    can_generate: bool
+
+
+class RegulatoryGenerateIn(BaseModel):
+    sender_id: Optional[str] = None
+    receiver_id: Optional[str] = None
+
+
+class RegulatoryDecisionIn(BaseModel):
+    decision: SubmissionStatus
+    reason: str = Field(min_length=1)
+
+
+class RegulatorySubmissionIn(BaseModel):
+    gateway: str = Field(min_length=1, max_length=255)
+    submission_reference: str = Field(min_length=1, max_length=255)
+    submitted_at: Optional[datetime] = None
+    acknowledgement: Optional[str] = None
+
+
+class RegulatoryRecordOut(BaseModel):
+    id: int
+    article_id: int
+    latest_export_id: Optional[int]
+    decision: SubmissionStatus
+    decision_reason: Optional[str]
+    gateway: Optional[str]
+    submission_reference: Optional[str]
+    acknowledgement: Optional[str]
+    submitted_at: Optional[datetime]
+    created_at: datetime
+    updated_at: datetime
 
     model_config = {"from_attributes": True}

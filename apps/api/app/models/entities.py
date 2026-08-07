@@ -133,6 +133,15 @@ class Priority(str, enum.Enum):
     P3 = "p3"
 
 
+class SubmissionStatus(str, enum.Enum):
+    """The regulatory disposition, independent of the review workflow."""
+
+    PENDING_DECISION = "pending_decision"
+    APPROVED_FOR_SUBMISSION = "approved_for_submission"
+    RETAINED_INTERNALLY = "retained_internally"
+    SUBMITTED = "submitted"
+
+
 #: The nine folders the wireframe shows, as views over status + signal tag.
 #: "Potential signals" is a tag filter rather than a status because an article
 #: can be a potential signal *and* awaiting review at the same time — which is
@@ -498,6 +507,9 @@ class Article(Base):
         back_populates="article", lazy="selectin", cascade="all, delete-orphan"
     )
     literature_source: Mapped[Optional[LiteratureSource]] = relationship()
+    regulatory_records: Mapped[list[RegulatoryRecord]] = relationship(
+        back_populates="article", cascade="all, delete-orphan"
+    )
 
 
 class ArticleSignalTag(Base):
@@ -679,6 +691,49 @@ class ExportPackage(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+class RegulatoryRecord(Base):
+    """Human regulatory decision and manual gateway evidence for one article.
+
+    This record deliberately has no transport credentials or automatic-send
+    state. A PV user downloads a generated package and uploads it outside the
+    application; the resulting gateway reference is the audit evidence kept
+    here.
+    """
+
+    __tablename__ = "regulatory_records"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    article_id: Mapped[int] = mapped_column(
+        ForeignKey("articles.id", ondelete="CASCADE"), unique=True, index=True
+    )
+    latest_export_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("export_packages.id"), nullable=True
+    )
+    decision: Mapped[SubmissionStatus] = mapped_column(
+        Enum(SubmissionStatus), default=SubmissionStatus.PENDING_DECISION, index=True
+    )
+    decision_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    gateway: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    submission_reference: Mapped[Optional[str]] = mapped_column(
+        String(255), nullable=True
+    )
+    acknowledgement: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    submitted_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    updated_by: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    article: Mapped[Article] = relationship(back_populates="regulatory_records")
 
 
 class AuditEvent(Base):

@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Alert
+from app.core.config import get_settings
 from app.services.audit import log_event
 
 
@@ -28,11 +29,15 @@ def create_alert(
         ).first()
         if existing:
             return existing
+    channels = ["in_app"]
+    if get_settings().notify_email_enabled:
+        channels.append("email")
     alert = Alert(
         user_id=user_id,
         article_id=article_id,
         alert_type=alert_type,
         priority=priority,
+        channels=channels,
         title=title,
         message=message,
         dedupe_key=dedupe_key,

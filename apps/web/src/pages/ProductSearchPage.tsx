@@ -74,6 +74,15 @@ export default function ProductSearchPage() {
     }
   }
 
+  async function loadCatalog() {
+    try {
+      setCatalog(await api.drugCatalogStatus());
+    } catch {
+      // The empty-state card remains the safe fallback if status is unavailable.
+      setCatalog(null);
+    }
+  }
+
   async function loadSchedules() {
     try {
       setSchedules(await api.searchSchedules());
@@ -83,10 +92,7 @@ export default function ProductSearchPage() {
   }
 
   useEffect(() => {
-    api
-      .drugCatalogStatus()
-      .then(setCatalog)
-      .catch(() => setCatalog(null));
+    loadCatalog();
     loadDrugs("");
     loadSchedules();
   }, []);
@@ -140,7 +146,11 @@ export default function ProductSearchPage() {
           disabled={busy}
           onClick={() =>
             wrap(async () => {
-              await Promise.all([loadDrugs(filter.trim()), loadSchedules()]);
+              await Promise.all([
+                loadCatalog(),
+                loadDrugs(filter.trim()),
+                loadSchedules(),
+              ]);
             })
           }
         >

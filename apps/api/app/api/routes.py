@@ -23,6 +23,8 @@ from app.models import (
     ExportPackage,
     Job,
     Product,
+    RegulatoryRecord,
+    LiteratureSource,
     ReviewDecision,
     ScreeningResult,
     SearchRun,
@@ -43,6 +45,8 @@ from app.models.entities import (
     SignalStatus,
     SignalTag,
     PresenceStatus,
+    Priority,
+    SubmissionStatus,
     product_active_ingredients,
 )
 from app.schemas.api import (
@@ -63,6 +67,12 @@ from app.schemas.api import (
     ProductOut,
     ProductUpdate,
     QueueStats,
+    AlertSettingsOut,
+    RegulatoryDecisionIn,
+    RegulatoryGenerateIn,
+    RegulatoryRecordOut,
+    RegulatorySubmissionIn,
+    RegulatoryValidationOut,
     RecallIn,
     RetrySearchRunIn,
     ReviewIn,
@@ -105,6 +115,7 @@ from app.services.export_service import (
     create_icsr_export,
     create_parallel_run_export,
 )
+from app.services.regulatory import generate_article_export, validate_article
 from app.services.import_service import (
     import_csv_rows,
     import_pmids_from_pubmed,
@@ -520,9 +531,15 @@ def drug_catalog_status(
 @router.post("/drugs/sync", response_model=DrugCatalogStatus)
 async def sync_drug_catalog(
     db: Session = Depends(get_db),
-    user: User = Depends(require_roles(Role.PV_LEAD, Role.ADMIN)),
+    user: User = Depends(get_current_user),
 ) -> DrugCatalogStatus:
-    """Refresh the local drug catalogue from NLM RxNorm."""
+    """Refresh the local RxNorm mirror used by the Product Search picker.
+
+    Any authenticated pilot user may initialise this shared, read-only
+    reference data. Product creation and catalogue administration remain
+    role-gated separately; the UI intentionally exposes this first-run action
+    to reviewers, so the API must honour that workflow as well.
+    """
     try:
         await sync_catalog(db, actor=user.email)
     except RxNormError as exc:
@@ -1308,6 +1325,27 @@ def queue_stats(
             query = query.where(Article.assignee_id == user.id)
         return db.scalar(query) or 0
 
+    # Human confirmation takes precedence, while preserving an unconfirmed AI
+    # proposal for work that has not reached a reviewer yet.
+    effective_classification = func.coalesce(
+        Article.human_classification, Article.ai_classification
+    )
+    classification_query = (
+        select(effective_classification, func.count())
+        .select_from(Article)
+        .where(effective_classification.is_not(None))
+        .group_by(effective_classification)
+    )
+    if mine_only:
+        classification_query = classification_query.where(Article.assignee_id == user.id)
+    classification_counts = {classification.value: 0 for classification in Classification}
+    classification_counts.update(
+        {
+            (classification.value if hasattr(classification, "value") else str(classification)): count
+            for classification, count in db.execute(classification_query).all()
+        }
+    )
+
     return QueueStats(
         expedited=count_queue(QueueType.EXPEDITED),
         priority=count_queue(QueueType.PRIORITY),
@@ -1320,6 +1358,7 @@ def queue_stats(
         not_case=count_status(ArticleStatus.NOT_FOR_SUBMISSION),
         deferred=count_status(ArticleStatus.DEFERRED),
         second_review=count_status(ArticleStatus.SECOND_REVIEW),
+        classification_counts=classification_counts,
     )
 
 
@@ -1329,6 +1368,15 @@ def list_articles(
     status: Optional[ArticleStatus] = None,
     product_id: Optional[int] = None,
     active_ingredient_id: Optional[int] = None,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    literature_source_id: Optional[int] = None,
+    classification: Optional[Classification] = None,
+    priority: Optional[Priority] = None,
+    submission_status: Optional[SubmissionStatus] = None,
+    review_status: Optional[str] = Query(
+        default=None, pattern="^(open|closed|all)$"
+    ),
     q: Optional[str] = None,
     open_only: bool = Query(default=True),
     include_archive: bool = Query(default=False),
@@ -1353,6 +1401,35 @@ def list_articles(
                 )
             )
         )
+    if date_from:
+        query = query.where(Article.pub_date >= date_from)
+    if date_to:
+        query = query.where(Article.pub_date <= date_to)
+    if literature_source_id:
+        query = query.where(Article.literature_source_id == literature_source_id)
+    if classification:
+        query = query.where(
+            func.coalesce(Article.human_classification, Article.ai_classification)
+            == classification
+        )
+    if priority:
+        query = query.where(Article.priority == priority)
+    if submission_status:
+        submission_conditions = {
+            SubmissionStatus.PENDING_DECISION: Article.status.notin_(
+                [
+                    ArticleStatus.APPROVED_FOR_SUBMISSION,
+                    ArticleStatus.NOT_FOR_SUBMISSION,
+                    ArticleStatus.SUBMITTED,
+                ]
+            ),
+            SubmissionStatus.APPROVED_FOR_SUBMISSION: Article.status
+            == ArticleStatus.APPROVED_FOR_SUBMISSION,
+            SubmissionStatus.RETAINED_INTERNALLY: Article.status
+            == ArticleStatus.NOT_FOR_SUBMISSION,
+            SubmissionStatus.SUBMITTED: Article.status == ArticleStatus.SUBMITTED,
+        }
+        query = query.where(submission_conditions[submission_status])
     if status:
         query = query.where(Article.status == status)
         open_only = False  # explicit status wins
@@ -1362,6 +1439,15 @@ def list_articles(
         query = query.where(Article.assignee_id == assignee_id)
     if signal_status:
         query = query.where(Article.signal_status == signal_status)
+    if review_status == "all":
+        open_only = False
+        include_archive = False
+    elif review_status == "closed":
+        include_archive = True
+        open_only = False
+    elif review_status == "open":
+        open_only = True
+        include_archive = False
     if include_archive:
         # Archive browse: auto-clear + not-case + valid icsr
         query = query.where(
@@ -1440,6 +1526,15 @@ def list_articles(
                 assignee_id=a.assignee_id,
                 assignee_name=assignee_names.get(a.assignee_id) if a.assignee_id else None,
                 signal_status=a.signal_status,
+                priority=a.priority,
+                ai_classification=a.ai_classification,
+                human_classification=a.human_classification,
+                effective_classification=a.human_classification or a.ai_classification,
+                signal_tags=[tag.tag.value for tag in a.signal_tags],
+                literature_source_id=a.literature_source_id,
+                literature_source_name=(
+                    a.literature_source.name if a.literature_source else None
+                ),
             )
         )
     items.sort(key=lambda x: (x.sla_due_at is None, x.sla_due_at or datetime.max))
@@ -1512,6 +1607,12 @@ def get_article(
         active_ingredients=a.product.active_ingredients if a.product else [],
         assignee_id=a.assignee_id,
         signal_status=a.signal_status,
+        priority=a.priority,
+        ai_classification=a.ai_classification,
+        human_classification=a.human_classification,
+        signal_tags=[tag.tag.value for tag in a.signal_tags],
+        literature_source_id=a.literature_source_id,
+        literature_source_name=a.literature_source.name if a.literature_source else None,
         latest_screening=screening,
         active_triage=triage,
         decisions=decisions,
@@ -1873,9 +1974,125 @@ def dashboard_summary(
     }
 
 
+@router.get("/dashboard/metrics")
+def dashboard_metrics(
+    mine_only: bool = Query(default=False),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict:
+    """Fifteen Step-12 measures with workspace-ready drill-through filters.
+
+    A metric always carries the exact query payload the workspace should use;
+    the client never has to reconstruct a status mapping from a display label.
+    """
+    mine = Article.assignee_id == user.id if mine_only else None
+
+    def count(*conditions: Any) -> int:
+        query = select(func.count()).select_from(Article)
+        if mine is not None:
+            query = query.where(mine)
+        if conditions:
+            query = query.where(*conditions)
+        return db.scalar(query) or 0
+
+    effective_classification = func.coalesce(
+        Article.human_classification, Article.ai_classification
+    )
+    relevant = [
+        Classification.POTENTIALLY_RELEVANT,
+        Classification.POTENTIAL_SAFETY_SIGNAL,
+        Classification.ADVERSE_EVENT_RELATED,
+        Classification.PRODUCT_QUALITY_RELATED,
+    ]
+    overdue_items = list_overdue_articles(db)
+    if mine_only:
+        overdue_items = [
+            item
+            for item in overdue_items
+            if (article := db.get(Article, item["id"])) is not None
+            and article.assignee_id == user.id
+        ]
+    metrics = [
+        {"key": "total_articles", "label": "Total articles identified", "count": count(), "filter": {"review_status": "all"}},
+        {"key": "articles_screened", "label": "Articles screened", "count": count(Article.ai_classification.is_not(None)), "filter": {"review_status": "all", "classification": "potentially_relevant"}},
+        {"key": "relevant_articles", "label": "Relevant articles", "count": count(effective_classification.in_(relevant)), "filter": {"classification": "potentially_relevant", "review_status": "all"}},
+        {"key": "irrelevant_articles", "label": "Irrelevant articles", "count": count(effective_classification == Classification.IRRELEVANT), "filter": {"classification": "irrelevant", "review_status": "all"}},
+        {"key": "potential_signals", "label": "Potential signals", "count": count(Article.signal_status == SignalStatus.POTENTIAL), "filter": {"signal_status": SignalStatus.POTENTIAL.value, "review_status": "all"}},
+        {"key": "invalid_or_failed", "label": "Invalid or failed records", "count": count(or_(Article.status == ArticleStatus.EXCEPTION, effective_classification == Classification.INVALID)), "filter": {"status": ArticleStatus.EXCEPTION.value}},
+        {"key": "awaiting_review", "label": "Reports awaiting review", "count": count(Article.status.in_([ArticleStatus.NEW_ALERT, ArticleStatus.AWAITING_REVIEW, ArticleStatus.QC_SAMPLE])), "filter": {"review_status": "open"}},
+        {"key": "approved_for_submission", "label": "Reports approved for submission", "count": count(Article.status == ArticleStatus.APPROVED_FOR_SUBMISSION), "filter": {"submission_status": SubmissionStatus.APPROVED_FOR_SUBMISSION.value}},
+        {"key": "retained_without_submission", "label": "Reports retained without submission", "count": count(Article.status == ArticleStatus.NOT_FOR_SUBMISSION), "filter": {"submission_status": SubmissionStatus.RETAINED_INTERNALLY.value}},
+        {"key": "submitted", "label": "Reports submitted", "count": count(Article.status == ArticleStatus.SUBMITTED), "filter": {"submission_status": SubmissionStatus.SUBMITTED.value}},
+        {"key": "overdue_reviews", "label": "Overdue reviews", "count": len(overdue_items), "filter": {"overdue_only": True, "review_status": "open"}},
+    ]
+
+    alert_query = select(Alert.priority, func.count(Alert.id)).group_by(Alert.priority)
+    if mine_only:
+        alert_query = alert_query.where(Alert.user_id == user.id)
+    alert_rows = [
+        {"key": f"alerts_{priority}", "label": f"Alerts ({priority})", "count": total, "filter": {"alert_priority": priority}}
+        for priority, total in db.execute(alert_query).all()
+    ]
+    product_query = select(Product.id, Product.name, func.count(Article.id)).join(Article).group_by(Product.id, Product.name)
+    if mine is not None:
+        product_query = product_query.where(mine)
+    ingredient_query = (
+        select(ActiveIngredient.id, ActiveIngredient.name, func.count(Article.id))
+        .join(product_active_ingredients, product_active_ingredients.c.active_ingredient_id == ActiveIngredient.id)
+        .join(Article, Article.product_id == product_active_ingredients.c.product_id)
+        .group_by(ActiveIngredient.id, ActiveIngredient.name)
+    )
+    if mine is not None:
+        ingredient_query = ingredient_query.where(mine)
+    source_query = (
+        select(Article.literature_source_id, func.count(Article.id))
+        .where(Article.literature_source_id.is_not(None))
+        .group_by(Article.literature_source_id)
+    )
+    if mine is not None:
+        source_query = source_query.where(mine)
+    source_names = {
+        source.id: source.name for source in db.scalars(select(LiteratureSource)).all()
+    }
+    search_rows = []
+    for schedule in db.scalars(select(SearchSchedule).where(SearchSchedule.is_active.is_(True))).all():
+        product = db.get(Product, schedule.product_id)
+        search_rows.append(
+            {
+                "product_id": schedule.product_id,
+                "product_name": product.name if product else str(schedule.product_id),
+                "status": schedule.last_status or "not_run",
+                "filter": {"product_id": schedule.product_id, "review_status": "open"},
+            }
+        )
+    return {
+        "scope": "mine" if mine_only else "all",
+        "metrics": metrics,
+        "alerts_by_priority": alert_rows,
+        "results_by_product": [
+            {"product_id": pid, "product_name": name, "count": total, "filter": {"product_id": pid, "review_status": "all"}}
+            for pid, name, total in db.execute(product_query).all()
+        ],
+        "results_by_ingredient": [
+            {"active_ingredient_id": iid, "active_ingredient_name": name, "count": total, "filter": {"active_ingredient_id": iid, "review_status": "all"}}
+            for iid, name, total in db.execute(ingredient_query).all()
+        ],
+        "results_by_source": [
+            {"literature_source_id": sid, "literature_source_name": source_names.get(sid, str(sid)), "count": total, "filter": {"literature_source_id": sid, "review_status": "all"}}
+            for sid, total in db.execute(source_query).all()
+        ],
+        "search_completion_status": search_rows,
+    }
+
+
 @router.get("/alerts", response_model=list[AlertOut])
 def list_alerts(
     unread_only: bool = Query(default=False),
+    priority: Optional[str] = None,
+    product_id: Optional[int] = None,
+    alert_type: Optional[str] = None,
+    created_from: Optional[datetime] = None,
+    created_to: Optional[datetime] = None,
     limit: int = Query(default=30, ge=1, le=100),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
@@ -1883,7 +2100,37 @@ def list_alerts(
     q = select(Alert).where(Alert.user_id == user.id)
     if unread_only:
         q = q.where(Alert.read_at.is_(None))
+    if priority:
+        q = q.where(Alert.priority == priority)
+    if alert_type:
+        q = q.where(Alert.alert_type == alert_type)
+    if product_id:
+        q = q.join(Article, Alert.article_id == Article.id).where(
+            Article.product_id == product_id
+        )
+    if created_from:
+        q = q.where(Alert.created_at >= created_from)
+    if created_to:
+        q = q.where(Alert.created_at <= created_to)
     return list(db.scalars(q.order_by(Alert.id.desc()).limit(limit)).all())
+
+
+@router.get("/alerts/settings", response_model=AlertSettingsOut)
+def get_alert_settings(
+    _: User = Depends(get_current_user),
+) -> AlertSettingsOut:
+    """Expose the intentionally narrow pilot channel contract.
+
+    Per-user preferences are not guessed before the partner confirms who owns
+    alerts. This tells the UI what is available now and makes later channels an
+    explicit extension instead of a misleading toggle.
+    """
+    settings = get_settings()
+    return AlertSettingsOut(
+        enabled_channels=["in_app"] + (["email"] if settings.notify_email_enabled else []),
+        available_channels=["in_app", "email"],
+        email_configured=bool(settings.notify_email_enabled and settings.notify_smtp_host),
+    )
 
 
 @router.post("/alerts/{alert_id}/read", response_model=AlertOut)
@@ -1915,6 +2162,173 @@ def read_all_alerts(
         mark_alert_read(db, alert, actor=user.email)
     db.commit()
     return {"updated": len(alerts)}
+
+
+# ── Regulatory prototype workflow ────────────────────────────────────
+
+
+def _regulatory_record(db: Session, article_id: int) -> RegulatoryRecord | None:
+    return db.scalar(
+        select(RegulatoryRecord).where(RegulatoryRecord.article_id == article_id)
+    )
+
+
+@router.get(
+    "/regulatory/articles/{article_id}/validate", response_model=RegulatoryValidationOut
+)
+def validate_regulatory_article(
+    article_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> dict:
+    article = db.get(Article, article_id)
+    if not article:
+        raise HTTPException(404, "Article not found")
+    try:
+        return validate_article(db, article)
+    except ValueError as exc:
+        raise HTTPException(500, str(exc)) from exc
+
+
+@router.post(
+    "/regulatory/articles/{article_id}/generate", response_model=ExportOut
+)
+def generate_regulatory_article(
+    article_id: int,
+    body: RegulatoryGenerateIn | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(Role.PV_LEAD, Role.ADMIN, Role.SENIOR_REVIEWER)),
+) -> ExportPackage:
+    article = db.get(Article, article_id)
+    if not article:
+        raise HTTPException(404, "Article not found")
+    try:
+        package = generate_article_export(
+            db,
+            article=article,
+            actor=user.email,
+            created_by=user.id,
+            sender_id=body.sender_id if body else None,
+            receiver_id=body.receiver_id if body else None,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    metrics.exports += 1
+    return package
+
+
+@router.get(
+    "/regulatory/articles/{article_id}/record", response_model=RegulatoryRecordOut
+)
+def get_regulatory_record(
+    article_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> RegulatoryRecord:
+    if not db.get(Article, article_id):
+        raise HTTPException(404, "Article not found")
+    record = _regulatory_record(db, article_id)
+    if not record:
+        raise HTTPException(404, "No regulatory decision has been recorded")
+    return record
+
+
+@router.post(
+    "/regulatory/articles/{article_id}/decision", response_model=RegulatoryRecordOut
+)
+def record_regulatory_decision(
+    article_id: int,
+    body: RegulatoryDecisionIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> RegulatoryRecord:
+    article = db.get(Article, article_id)
+    if not article:
+        raise HTTPException(404, "Article not found")
+    if body.decision not in (
+        SubmissionStatus.APPROVED_FOR_SUBMISSION,
+        SubmissionStatus.RETAINED_INTERNALLY,
+    ):
+        raise HTTPException(422, "Decision must be approved_for_submission or retained_internally")
+    record = _regulatory_record(db, article.id)
+    if record is None:
+        record = RegulatoryRecord(article_id=article.id)
+        db.add(record)
+    record.decision = body.decision
+    record.decision_reason = body.reason
+    record.updated_by = user.id
+    article.status = (
+        ArticleStatus.APPROVED_FOR_SUBMISSION
+        if body.decision == SubmissionStatus.APPROVED_FOR_SUBMISSION
+        else ArticleStatus.NOT_FOR_SUBMISSION
+    )
+    log_event(
+        db,
+        actor=user.email,
+        action="regulatory_decision_recorded",
+        entity_type="article",
+        entity_id=article.id,
+        payload={"decision": body.decision.value, "reason": body.reason},
+    )
+    db.commit()
+    db.refresh(record)
+    return record
+
+
+@router.post(
+    "/regulatory/articles/{article_id}/submission", response_model=RegulatoryRecordOut
+)
+def record_manual_submission(
+    article_id: int,
+    body: RegulatorySubmissionIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> RegulatoryRecord:
+    article = db.get(Article, article_id)
+    if not article:
+        raise HTTPException(404, "Article not found")
+    record = _regulatory_record(db, article.id)
+    if not record or record.decision != SubmissionStatus.APPROVED_FOR_SUBMISSION:
+        raise HTTPException(
+            409, "Record an approved-for-submission decision before recording a gateway filing"
+        )
+    if not record.latest_export_id:
+        raise HTTPException(409, "Generate a validated regulatory package before recording submission")
+    record.decision = SubmissionStatus.SUBMITTED
+    record.gateway = body.gateway
+    record.submission_reference = body.submission_reference
+    record.acknowledgement = body.acknowledgement
+    record.submitted_at = body.submitted_at or datetime.now(timezone.utc)
+    record.updated_by = user.id
+    article.status = ArticleStatus.SUBMITTED
+    log_event(
+        db,
+        actor=user.email,
+        action="regulatory_submission_recorded",
+        entity_type="article",
+        entity_id=article.id,
+        payload={"gateway": body.gateway, "submission_reference": body.submission_reference},
+    )
+    db.commit()
+    db.refresh(record)
+    return record
+
+
+@router.get("/regulatory/articles/{article_id}/versions", response_model=list[ExportOut])
+def list_regulatory_versions(
+    article_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> list[ExportPackage]:
+    if not db.get(Article, article_id):
+        raise HTTPException(404, "Article not found")
+    packages = list(db.scalars(select(ExportPackage).order_by(ExportPackage.id.desc())).all())
+    return [
+        package
+        for package in packages
+        if (package.payload_json or {}).get("regulatory", {}).get("article_id")
+        == article_id
+    ]
 
 
 # ── Export ────────────────────────────────────────────────────────────

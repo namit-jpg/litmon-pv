@@ -52,6 +52,11 @@ class Settings(BaseSettings):
     cdsco_dtd_path: str = ""
     cdsco_sender_id: str = "LITMON-PV-PILOT"
     cdsco_receiver_id: str = "NCC-PvPI-CDSCO"
+    # This deliberately defaults to empty: the partner has not supplied an
+    # official CDSCO mandatory-field specification.  Deployments may provide a
+    # JSON list of {"field": ..., "label": ..., "required": true} records;
+    # regulatory generation then blocks on any required missing value.
+    regulatory_mandatory_fields_json: str = ""
 
     app_env: str = "development"
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
