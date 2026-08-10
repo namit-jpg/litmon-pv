@@ -6,6 +6,20 @@ export function setToken(t: string | null) {
   token = t;
 }
 
+/** Called when the server rejects our token, so the app can clear the session. */
+let sessionExpiredHandler: () => void = () => {};
+
+export function onSessionExpiredHandler(fn: () => void) {
+  sessionExpiredHandler = fn;
+}
+
+function onSessionExpired() {
+  token = null;
+  localStorage.removeItem("litmon_token");
+  localStorage.removeItem("litmon_user");
+  sessionExpiredHandler();
+}
+
 /** Parse FastAPI error bodies into a short operator-facing message. */
 export function formatApiError(raw: string, fallback = "Request failed"): string {
   if (!raw) return fallback;
@@ -36,6 +50,13 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, { ...init, headers });
   if (!res.ok) {
     const text = await res.text();
+    // An expired token 401s on every endpoint, not just login. Without this the
+    // page keeps showing the cached user next to "Invalid credentials", giving
+    // no hint that signing in again is the fix.
+    if (res.status === 401 && token) {
+      onSessionExpired();
+      throw new Error("Your session expired. Please sign in again.");
+    }
     throw new Error(formatApiError(text, res.statusText));
   }
   if (res.status === 204) return undefined as T;

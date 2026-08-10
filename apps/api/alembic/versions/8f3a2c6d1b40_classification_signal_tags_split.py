@@ -109,8 +109,11 @@ def upgrade() -> None:
         if "human_classification" not in article_cols:
             batch.add_column(sa.Column("human_classification", sa.String(32), nullable=True))
         if "priority" not in article_cols:
+            # The default is the enum *name*, matching how SQLAlchemy persists
+            # this column. Seeding the value ("p3") instead makes every existing
+            # row unreadable the moment the ORM tries to load it.
             batch.add_column(
-                sa.Column("priority", sa.String(8), nullable=False, server_default="p3")
+                sa.Column("priority", sa.String(8), nullable=False, server_default="P3")
             )
         if "exception_cause" not in article_cols:
             batch.add_column(sa.Column("exception_cause", sa.String(32), nullable=True))
@@ -135,6 +138,9 @@ def upgrade() -> None:
             batch.add_column(sa.Column("mah", sa.String(255), nullable=True))
         if "markets" not in product_cols:
             batch.add_column(sa.Column("markets", sa.JSON(), nullable=True))
+            # ProductOut.markets is a required list, so products that predate
+            # this column fail response validation until they hold an array.
+            op.execute(sa.text("UPDATE products SET markets = '[]' WHERE markets IS NULL"))
 
     screening_cols = cols("screening_results")
     extraction = [
@@ -163,6 +169,9 @@ def upgrade() -> None:
     if "channels" not in cols("alerts"):
         with op.batch_alter_table("alerts") as batch:
             batch.add_column(sa.Column("channels", sa.JSON(), nullable=True))
+        # AlertOut.channels is a required list, so alerts raised before this
+        # column existed break the inbox until they hold an array.
+        op.execute(sa.text("UPDATE alerts SET channels = '[]' WHERE channels IS NULL"))
 
     _seed_sources()
     _remap_statuses()
@@ -198,14 +207,27 @@ def _seed_sources() -> None:
 
 
 def _remap_statuses() -> None:
-    """Rewrite old combined statuses onto the status/classification split."""
+    """Rewrite old combined statuses onto the status/classification split.
+
+    The map above is written in enum values, but SQLAlchemy persists enum
+    *names*, so the column holds ``ROUTED`` rather than ``routed``. Matching on
+    the value alone updates nothing and leaves populated databases carrying
+    statuses the new enum cannot load, so compare against both spellings.
+    """
     for old, (new_status, classification) in _STATUS_MAP.items():
         op.execute(
             sa.text(
-                "UPDATE articles SET status = :new_status, "
-                "ai_classification = COALESCE(ai_classification, :classification) "
-                "WHERE status = :old"
-            ).bindparams(new_status=new_status, classification=classification, old=old)
+                "UPDATE articles SET status = :new_status_name, "
+                "ai_classification = COALESCE(ai_classification, :classification_name) "
+                "WHERE status IN (:old, :old_name)"
+            ).bindparams(
+                new_status_name=new_status.upper(),
+                classification_name=(
+                    classification.upper() if classification else None
+                ),
+                old=old,
+                old_name=old.upper(),
+            )
         )
 
     # signal_status is retained as the coarse rollup the queue already sorts on;
@@ -237,10 +259,17 @@ def downgrade() -> None:
         "submitted": "disposition_valid_icsr",
         "archived": "auto_clear",
     }
+    # Same name-vs-value mismatch as the upgrade: match either spelling and
+    # write back the stored form, or a rollback strands every row.
     for new_status, old in inverse.items():
         op.execute(
-            sa.text("UPDATE articles SET status = :old WHERE status = :new_status").bindparams(
-                old=old, new_status=new_status
+            sa.text(
+                "UPDATE articles SET status = :old_name "
+                "WHERE status IN (:new_status, :new_status_name)"
+            ).bindparams(
+                old_name=old.upper(),
+                new_status=new_status,
+                new_status_name=new_status.upper(),
             )
         )
 

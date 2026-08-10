@@ -1,5 +1,11 @@
-import React, { createContext, useContext, useMemo, useState } from "react";
-import { api, setToken, User } from "./api";
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+import { api, onSessionExpiredHandler, setToken, User } from "./api";
 
 type AuthCtx = {
   user: User | null;
@@ -18,6 +24,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const raw = localStorage.getItem("litmon_user");
     return raw ? JSON.parse(raw) : null;
   });
+
+  // The token outlives the page, so an expired one is only discovered when a
+  // request comes back 401. Drop the cached user then, or the header keeps
+  // showing someone signed in while every call fails.
+  useEffect(() => {
+    onSessionExpiredHandler(() => {
+      setTok(null);
+      setUser(null);
+    });
+  }, []);
 
   const value = useMemo<AuthCtx>(
     () => ({
