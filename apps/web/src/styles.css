@@ -44,6 +44,24 @@
   --shadow-md: 0 2px 6px #1f2a2412, 0 8px 20px #1f2a240f;
   --shadow-lg: 0 12px 34px #1f2a241f, 0 2px 8px #1f2a2412;
 
+  /* Role tokens so a theme swap reaches every surface. */
+  --topbar-bg: #fffefbe8;
+  --on-accent: #fff;
+  --input-bg: #fff;
+  --row-hover: #f4f7f3;
+  --row-hover-danger: #f7ded6;
+  --warn-line: #e6d3a6;
+  --danger-line: #e0b5a8;
+  --danger-line-2: #e6c4ba;
+  --ok-line: #bcdcc6;
+  --water-line: #b9d7e0;
+  --water-ink: #1f5c70;
+  --muted-2: #9aa79f;
+  --ring: #2e6f4e22;
+  --ring-soft: #0000000a;
+  --chart-grid: #e4e5da;
+  --chart-neutral: #a9b3ab;
+
   --font-sans: ui-sans-serif, -apple-system, "Segoe UI Variable Text",
     "Segoe UI", Inter, Roboto, system-ui, sans-serif;
   --font-serif: ui-serif, "Iowan Old Style", Georgia, "Palatino Linotype",
@@ -58,6 +76,130 @@
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
+
+
+/* ── Dark theme ────────────────────────────────────────────────────────
+   Surfaces, ink and status colours are the MVP wireframe's dark palette.
+   Declared as a reusable block so the three selectors below cannot drift. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1116;
+    /* Near-flat tints: the light theme's broad radial washes read as banding
+       on a dark canvas, so these sit a hair above the page colour. */
+    --bg-tint-a: #141824;
+    --bg-tint-b: #12161f;
+    --panel: #161922;
+    --panel-2: #1d212b;
+    --panel-3: #252a36;
+
+    --text: #e7e9f0;
+    --text-strong: #f4f6fa;
+    --muted: #a0a6b6;
+    --border: #2b3040;
+    --border-strong: #3d4455;
+
+    --accent: #8e99f2;
+    --accent-hover: #a6aff6;
+    --accent-soft: #212740;
+    --accent-2: #6f7ce0;
+    --water: #63b6cf;
+    --water-soft: #16262e;
+    --water-line: #2b4a57;
+    --water-ink: #9fd4e4;
+    --danger: #f08078;
+    --danger-soft: #2e1b1a;
+    --danger-ink: #f4a49e;
+    --danger-line: #5a2f2b;
+    --danger-line-2: #4a2724;
+    --warn: #d9a441;
+    --warn-soft: #2b2417;
+    --warn-ink: #e6bd74;
+    --warn-line: #574728;
+    --ok: #57c08a;
+    --ok-soft: #152a22;
+    --ok-ink: #7fd3a6;
+    --ok-line: #2a5140;
+
+    /* The accent is a light indigo, so button labels on it must be dark. */
+    --on-accent: #0f1116;
+    --input-bg: #1a1e28;
+    --row-hover: #1f2431;
+    --row-hover-danger: #2e1b1a;
+    --muted-2: #70768a;
+    --topbar-bg: #161922e8;
+    --ring: #8e99f233;
+    --ring-soft: #ffffff12;
+    --chart-grid: #262c3a;
+    --chart-neutral: #7b8296;
+
+    /* Shadows carry almost no weight on a dark canvas; deepen them so cards
+       still separate from the page. */
+    --shadow-sm: 0 1px 2px #00000040, 0 1px 3px #00000030;
+    --shadow-md: 0 2px 6px #00000047, 0 8px 20px #00000038;
+    --shadow-lg: 0 12px 34px #00000059, 0 2px 8px #00000042;
+
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+    --bg: #0f1116;
+    /* Near-flat tints: the light theme's broad radial washes read as banding
+       on a dark canvas, so these sit a hair above the page colour. */
+    --bg-tint-a: #141824;
+    --bg-tint-b: #12161f;
+    --panel: #161922;
+    --panel-2: #1d212b;
+    --panel-3: #252a36;
+
+    --text: #e7e9f0;
+    --text-strong: #f4f6fa;
+    --muted: #a0a6b6;
+    --border: #2b3040;
+    --border-strong: #3d4455;
+
+    --accent: #8e99f2;
+    --accent-hover: #a6aff6;
+    --accent-soft: #212740;
+    --accent-2: #6f7ce0;
+    --water: #63b6cf;
+    --water-soft: #16262e;
+    --water-line: #2b4a57;
+    --water-ink: #9fd4e4;
+    --danger: #f08078;
+    --danger-soft: #2e1b1a;
+    --danger-ink: #f4a49e;
+    --danger-line: #5a2f2b;
+    --danger-line-2: #4a2724;
+    --warn: #d9a441;
+    --warn-soft: #2b2417;
+    --warn-ink: #e6bd74;
+    --warn-line: #574728;
+    --ok: #57c08a;
+    --ok-soft: #152a22;
+    --ok-ink: #7fd3a6;
+    --ok-line: #2a5140;
+
+    /* The accent is a light indigo, so button labels on it must be dark. */
+    --on-accent: #0f1116;
+    --input-bg: #1a1e28;
+    --row-hover: #1f2431;
+    --row-hover-danger: #2e1b1a;
+    --muted-2: #70768a;
+    --topbar-bg: #161922e8;
+    --ring: #8e99f233;
+    --ring-soft: #ffffff12;
+    --chart-grid: #262c3a;
+    --chart-neutral: #7b8296;
+
+    /* Shadows carry almost no weight on a dark canvas; deepen them so cards
+       still separate from the page. */
+    --shadow-sm: 0 1px 2px #00000040, 0 1px 3px #00000030;
+    --shadow-md: 0 2px 6px #00000047, 0 8px 20px #00000038;
+    --shadow-lg: 0 12px 34px #00000059, 0 2px 8px #00000042;
+
+    color-scheme: dark;
+  }
 
 * {
   box-sizing: border-box;
@@ -106,7 +248,7 @@ a:hover {
   gap: 1.5rem;
   padding: 0.85rem 1.5rem;
   border-bottom: 1px solid var(--border);
-  background: #fffefbe8;
+  background: var(--topbar-bg);
   backdrop-filter: blur(10px);
   position: sticky;
   top: 0;
@@ -134,7 +276,7 @@ a:hover {
   border-radius: 999px;
   background: var(--warn-soft);
   color: var(--warn-ink);
-  border: 1px solid #e6d3a6;
+  border: 1px solid var(--warn-line);
   letter-spacing: 0.01em;
 }
 
@@ -189,7 +331,7 @@ a:hover {
   height: 0.55rem;
   border-radius: 50%;
   background: var(--muted);
-  box-shadow: 0 0 0 3px #0000000a;
+  box-shadow: 0 0 0 3px var(--ring-soft);
 }
 .presence-dot.available {
   background: var(--ok);
@@ -273,12 +415,12 @@ a:hover {
 .btn.primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 .btn.primary:hover {
   background: var(--accent-hover);
   border-color: var(--accent-hover);
-  color: #fff;
+  color: var(--on-accent);
 }
 .btn.ghost {
   background: transparent;
@@ -313,15 +455,15 @@ a:hover {
   color: var(--text-strong);
 }
 .stat.danger {
-  border-color: #e6c4ba;
+  border-color: var(--danger-line-2);
   background: linear-gradient(var(--danger-soft), var(--panel) 65%);
 }
 .stat.warn {
-  border-color: #e6d3a6;
+  border-color: var(--warn-line);
   background: linear-gradient(var(--warn-soft), var(--panel) 65%);
 }
 .stat.ok {
-  border-color: #bcdcc6;
+  border-color: var(--ok-line);
   background: linear-gradient(var(--ok-soft), var(--panel) 65%);
 }
 
@@ -349,7 +491,7 @@ a:hover {
 .tab.active {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   font-weight: 600;
 }
 
@@ -381,7 +523,7 @@ a:hover {
   font-variant-numeric: tabular-nums;
 }
 .table tbody tr:hover {
-  background: #f4f7f3;
+  background: var(--row-hover);
 }
 .table tr:last-child td {
   border-bottom: none;
@@ -399,17 +541,17 @@ a:hover {
 }
 .pill.danger {
   background: var(--danger-soft);
-  border-color: #e0b5a8;
+  border-color: var(--danger-line);
   color: var(--danger-ink);
 }
 .signal-potential_signal {
   background: var(--warn-soft);
-  border-color: #e6d3a6;
+  border-color: var(--warn-line);
   color: var(--warn-ink);
 }
 .signal-confirmed_signal {
   background: var(--danger-soft);
-  border-color: #e0b5a8;
+  border-color: var(--danger-line);
   color: var(--danger-ink);
 }
 .signal-rejected_signal,
@@ -418,22 +560,22 @@ a:hover {
 }
 .queue-expedited {
   background: var(--danger-soft);
-  border-color: #e0b5a8;
+  border-color: var(--danger-line);
   color: var(--danger-ink);
 }
 .queue-priority {
   background: var(--warn-soft);
-  border-color: #e6d3a6;
+  border-color: var(--warn-line);
   color: var(--warn-ink);
 }
 .queue-standard {
   background: var(--water-soft);
-  border-color: #b9d7e0;
-  color: #1f5c70;
+  border-color: var(--water-line);
+  color: var(--water-ink);
 }
 .queue-qc_sample {
   background: var(--ok-soft);
-  border-color: #bcdcc6;
+  border-color: var(--ok-line);
   color: var(--ok-ink);
 }
 
@@ -562,7 +704,7 @@ label {
 input,
 textarea,
 select {
-  background: #fff;
+  background: var(--input-bg);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   color: var(--text);
@@ -576,14 +718,14 @@ textarea:focus,
 select:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px #2e6f4e22;
+  box-shadow: 0 0 0 3px var(--ring);
 }
 input[type="checkbox"] {
   accent-color: var(--accent);
   width: auto;
 }
 ::placeholder {
-  color: #9aa79f;
+  color: var(--muted-2);
 }
 
 .grid-2 {
@@ -622,7 +764,7 @@ input[type="checkbox"] {
 
 .error {
   background: var(--danger-soft);
-  border: 1px solid #e0b5a8;
+  border: 1px solid var(--danger-line);
   color: var(--danger-ink);
   padding: 0.7rem 0.9rem;
   border-radius: var(--radius-sm);
@@ -631,7 +773,7 @@ input[type="checkbox"] {
 }
 .ok-banner {
   background: var(--ok-soft);
-  border: 1px solid #bcdcc6;
+  border: 1px solid var(--ok-line);
   color: var(--ok-ink);
   padding: 0.7rem 0.9rem;
   border-radius: var(--radius-sm);
@@ -640,7 +782,7 @@ input[type="checkbox"] {
 }
 .warn-banner {
   background: var(--warn-soft);
-  border: 1px solid #e6d3a6;
+  border: 1px solid var(--warn-line);
   color: var(--warn-ink);
   padding: 0.7rem 0.9rem;
   border-radius: var(--radius-sm);
@@ -672,7 +814,7 @@ input[type="checkbox"] {
 }
 .pill.ok {
   background: var(--ok-soft);
-  border-color: #bcdcc6;
+  border-color: var(--ok-line);
   color: var(--ok-ink);
 }
 .stat small {
@@ -737,7 +879,7 @@ pre {
   box-shadow: inset 3px 0 0 var(--danger);
 }
 .row-overdue:hover {
-  background: #f7ded6;
+  background: var(--row-hover-danger);
 }
 
 .alerts-wrap {
@@ -755,7 +897,7 @@ pre {
   padding: 0 0.3rem;
   border-radius: 999px;
   background: var(--danger);
-  color: #fff;
+  color: var(--on-accent);
   font-size: 0.72rem;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
@@ -816,7 +958,7 @@ pre {
   transition: background 0.15s ease;
 }
 .alert-item:hover {
-  background: #f4f7f3;
+  background: var(--row-hover);
 }
 .alert-item.unread {
   background: var(--accent-soft);
@@ -977,8 +1119,8 @@ pre {
   padding: 0.2rem 0.55rem;
   border-radius: 999px;
   background: var(--water-soft);
-  color: #1f5c70;
-  border: 1px solid #b9d7e0;
+  color: var(--water-ink);
+  border: 1px solid var(--water-line);
 }
 .api-tag-atc {
   font-weight: 400;
@@ -1036,17 +1178,17 @@ pre {
 }
 .drug-kind-IN {
   background: var(--accent-soft);
-  border-color: #bcdcc6;
+  border-color: var(--ok-line);
   color: var(--ok-ink);
 }
 .drug-kind-BN {
   background: var(--water-soft);
-  border-color: #b9d7e0;
-  color: #1f5c70;
+  border-color: var(--water-line);
+  color: var(--water-ink);
 }
 .drug-kind-MIN {
   background: var(--warn-soft);
-  border-color: #e6d3a6;
+  border-color: var(--warn-line);
   color: var(--warn-ink);
 }
 
@@ -1108,7 +1250,7 @@ pre {
   font-size: 0.78rem;
   color: var(--accent);
   background: var(--accent-soft);
-  border: 1px solid #bcdcc6;
+  border: 1px solid var(--ok-line);
   border-radius: 999px;
   cursor: pointer;
 }
@@ -1883,4 +2025,105 @@ pre {
   white-space: pre-wrap;
   font: 0.72rem/1.4 var(--font-mono);
   color: var(--muted);
+}
+
+/* ── Ephemeral confirmations ───────────────────────────────────────────
+   Fixed to the viewport so a confirmation is visible regardless of how far
+   down a long detection report the reviewer has scrolled. */
+.toast-stack {
+  position: fixed;
+  right: 1.25rem;
+  bottom: 1.25rem;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  /* The stack spans the corner but only each toast should catch the pointer,
+     or it would swallow clicks on the page beneath. */
+  pointer-events: none;
+  max-width: min(30rem, calc(100vw - 2.5rem));
+}
+
+.toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  width: 100%;
+  padding: 0.7rem 0.9rem;
+  font: inherit;
+  text-align: left;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-lg);
+  cursor: pointer;
+  animation: toast-in 160ms ease-out;
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(0.5rem); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Respect a reduced-motion preference rather than always sliding. */
+@media (prefers-reduced-motion: reduce) {
+  .toast { animation: none; }
+}
+
+.toast-mark {
+  flex: none;
+  width: 1.25rem;
+  height: 1.25rem;
+  margin-top: 0.1rem;
+  display: grid;
+  place-items: center;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--on-accent);
+  background: var(--accent);
+  border-radius: 50%;
+}
+
+.toast-body { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
+.toast-body strong { font-weight: 600; overflow-wrap: anywhere; }
+.toast-detail { font-size: 0.82rem; color: var(--muted); overflow-wrap: anywhere; }
+
+.toast-error { border-left-color: var(--danger); }
+.toast-error .toast-mark { background: var(--danger); }
+.toast-info { border-left-color: var(--accent-2); }
+.toast-info .toast-mark { background: var(--accent-2); }
+
+/* Toasts are transient UI, never part of a printed regulatory record. */
+@media print { .toast-stack { display: none; } }
+
+/* Theme switch in the topbar. Mirrors .presence-control so the two sit as a
+   matched pair rather than competing for attention. */
+.theme-picker {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+.theme-picker select {
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  padding: 0.2rem 0.1rem;
+}
+.theme-picker option {
+  /* Native dropdowns paint on the OS surface, so set both explicitly or the
+     options render dark-on-dark. */
+  color: var(--text);
+  background: var(--panel);
+}
+.theme-glyph {
+  font-size: 0.95rem;
+  line-height: 1;
 }

@@ -9,9 +9,9 @@ surfaces later as a 500 on ordinary reads:
    and pre-split rows keep statuses the new enum cannot load.
 2. ``priority`` — added with ``server_default="p3"``, the value rather than the
    name, so existing rows get a spelling the enum rejects.
-3. ``markets`` / ``channels`` — added nullable with no backfill, but the
-   matching response models require lists, so serialising any pre-existing
-   product or alert fails.
+3. ``markets`` / ``channels`` / ``article_excerpts`` — added nullable with no
+   backfill, but the matching response models require lists, so serialising
+   any pre-existing product, alert, or screening result fails.
 
 Safe to re-run: each step only touches rows that are still wrong.
 
@@ -75,7 +75,11 @@ def _plan(conn) -> dict[str, int]:
 
     # Every JSON list column added without a backfill fails response validation
     # the same way, so check them together rather than one bug at a time.
-    for table, column in (("products", "markets"), ("alerts", "channels")):
+    for table, column in (
+        ("products", "markets"),
+        ("alerts", "channels"),
+        ("screening_results", "article_excerpts"),
+    ):
         plan[f"{table}.{column}"] = (
             conn.execute(
                 text(f"SELECT COUNT(*) FROM {table} WHERE {column} IS NULL")
@@ -111,9 +115,9 @@ def main() -> int:
         print(f"  articles.status    {status:<24} {n:>4} -> {arrow}")
     if plan["priority"]:
         print(f"  articles.priority  lower-case value    {plan['priority']:>4} -> upper-case name")
-    for key in ("products.markets", "alerts.channels"):
+    for key in ("products.markets", "alerts.channels", "screening_results.article_excerpts"):
         if plan.get(key):
-            print(f"  {key:<18} NULL                {plan[key]:>4} -> []")
+            print(f"  {key:<32} NULL      {plan[key]:>4} -> []")
 
     unmapped = [s for s, _ in detail if s not in STATUS_MAP]
     if unmapped:
@@ -140,7 +144,11 @@ def main() -> int:
                     "UPDATE articles SET priority = :name WHERE priority = :value"
                 ).bindparams(name=member.name, value=member.value)
             )
-        for table, column in (("products", "markets"), ("alerts", "channels")):
+        for table, column in (
+            ("products", "markets"),
+            ("alerts", "channels"),
+            ("screening_results", "article_excerpts"),
+        ):
             conn.execute(
                 text(f"UPDATE {table} SET {column} = '[]' WHERE {column} IS NULL")
             )

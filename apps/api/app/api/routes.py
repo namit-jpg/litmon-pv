@@ -2750,7 +2750,15 @@ def generate_regulatory_article(
     article_id: int,
     body: RegulatoryGenerateIn | None = None,
     db: Session = Depends(get_db),
-    user: User = Depends(require_roles(Role.PV_LEAD, Role.ADMIN, Role.SENIOR_REVIEWER)),
+    # A reviewer who assessed the case can build its file: generation is a
+    # rendering of their own decision, and it is gated behind the same
+    # mandatory-field validation regardless of who asks. Releasing the file to
+    # the regulator stays a separate, restricted step.
+    user: User = Depends(
+        require_roles(
+            Role.PV_LEAD, Role.ADMIN, Role.SENIOR_REVIEWER, Role.REVIEWER
+        )
+    ),
 ) -> ExportPackage:
     article = db.get(Article, article_id)
     if not article:

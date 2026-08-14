@@ -2,6 +2,12 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, Navigate, NavLink, Route, Routes, useNavigate } from "react-router-dom";
 import { useAuth } from "./auth";
 import { api, Presence } from "./api";
+import {
+  resolvedTheme,
+  saveTheme,
+  storedTheme,
+  type ThemeChoice,
+} from "./theme";
 import LoginPage from "./pages/LoginPage";
 import WorkspacePage from "./pages/WorkspacePage";
 import DetectionReportPage from "./pages/DetectionReportPage";
@@ -61,6 +67,50 @@ function PresenceControl() {
       <span className="presence-capacity">
         {presence.active_work_count}/{presence.capacity_limit}
       </span>
+    </div>
+  );
+}
+
+/** Light / dark / system switch. Sits in the topbar beside the user. */
+function ThemePicker() {
+  const [choice, setChoice] = useState<ThemeChoice>(() => storedTheme());
+
+  // Re-render on an OS theme change so the label stays truthful while the
+  // choice is "system".
+  useEffect(() => {
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const onChange = () => setChoice((current) => current);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+
+  const resolved = resolvedTheme(choice);
+
+  return (
+    <div
+      className="theme-picker"
+      title={
+        choice === "system"
+          ? `Following your system setting (${resolved})`
+          : `Theme: ${choice}`
+      }
+    >
+      <span className="theme-glyph" aria-hidden="true">
+        {resolved === "dark" ? "☾" : "☀"}
+      </span>
+      <select
+        aria-label="Colour theme"
+        value={choice}
+        onChange={(event) => {
+          const next = event.target.value as ThemeChoice;
+          setChoice(next);
+          saveTheme(next);
+        }}
+      >
+        <option value="system">System</option>
+        <option value="light">Light</option>
+        <option value="dark">Dark</option>
+      </select>
     </div>
   );
 }
@@ -157,6 +207,7 @@ function Shell({ children }: { children: React.ReactNode }) {
         </div>
         <PresenceControl />
         <div className="userbox">
+          <ThemePicker />
           <span>
             {user?.full_name} ({user?.role})
           </span>

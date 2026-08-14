@@ -10,6 +10,7 @@ import {
   RegulatoryValidation,
   SubmissionStatus,
 } from "../api";
+import { useToast } from "../toast";
 
 const SUBMISSION_VIEWS: { value: SubmissionStatus; label: string }[] = [
   { value: "pending_decision", label: "Pending decision" },
@@ -21,6 +22,7 @@ const SUBMISSION_VIEWS: { value: SubmissionStatus; label: string }[] = [
 export default function SubmissionPage() {
   const { id } = useParams();
   const articleId = Number(id);
+  const { toast } = useToast();
   const [params, setParams] = useSearchParams();
   const status = (params.get("status") || "pending_decision") as SubmissionStatus;
   const [items, setItems] = useState<ArticleListItem[]>([]);
@@ -82,6 +84,9 @@ export default function SubmissionPage() {
       await load();
     } catch (caught) {
       setError(String(caught));
+      // Surface the failure the same way as a success, so an action never
+      // looks like it did nothing.
+      toast("That action did not complete", "error", String(caught));
     } finally {
       setBusy(false);
     }
@@ -91,6 +96,14 @@ export default function SubmissionPage() {
     await run(async () => {
       await api.regulatoryDecision(articleId, { decision, reason });
       setMessage("The human submission decision was recorded in the audit trail.");
+      toast(
+        decision === "approved_for_submission"
+          ? "Approved for submission"
+          : "Retained internally",
+        "success",
+        "Recorded in the audit trail with your reason."
+      );
+      setReason("");
     });
   }
 
@@ -172,20 +185,41 @@ export default function SubmissionPage() {
               </tbody>
             </table>
             {validation.blocking_errors.length > 0 ? (
-              <ul className="error-list">
-                {validation.blocking_errors.map((item) => <li key={item}>{item}</li>)}
-              </ul>
+              <>
+                <ul className="error-list">
+                  {validation.blocking_errors.map((item) => <li key={item}>{item}</li>)}
+                </ul>
+                {/* These fields are filled during the assessment, so a missing
+                    one is only actionable on the detection report. */}
+                <p className="muted">
+                  Missing fields are recorded while assessing the case. Open the
+                  detection report, complete them, and record a decision.
+                </p>
+              </>
             ) : null}
-            <button
-              className="btn primary no-print"
-              disabled={busy || !validation.can_generate}
-              onClick={() => run(async () => {
-                await api.regulatoryGenerate(articleId);
-                setMessage("A new version was generated and stored. Nothing was transmitted.");
-              })}
-            >
-              Generate new XML version
-            </button>
+            <div className="row-actions no-print">
+              <button
+                className="btn primary"
+                disabled={busy || !validation.can_generate}
+                onClick={() => run(async () => {
+                  const pkg = await api.regulatoryGenerate(articleId);
+                  setMessage("A new version was generated and stored. Nothing was transmitted.");
+                  toast(
+                    "XML version generated",
+                    "success",
+                    `${pkg.filename} — stored, not transmitted.`
+                  );
+                })}
+              >
+                Generate new XML version
+              </button>
+              <Link
+                className={validation.can_generate ? "btn" : "btn primary"}
+                to={`/articles/${articleId}`}
+              >
+                Open detection report
+              </Link>
+            </div>
           </>
         ) : <p className="muted">Loading validation…</p>}
       </section>
@@ -246,6 +280,11 @@ export default function SubmissionPage() {
                 acknowledgement: acknowledgement || undefined,
               });
               setMessage("The manual gateway reference was recorded. LitMon-PV did not transmit the file.");
+              toast(
+                "Submission recorded",
+                "success",
+                `${gateway} · ${reference} — LitMon-PV did not transmit the file.`
+              );
             })}
           >
             Record manual submission

@@ -7,6 +7,7 @@ import {
   ScheduleFrequency,
   SearchSchedule,
 } from "../api";
+import { useToast } from "../toast";
 
 const FREQUENCIES: { value: ScheduleFrequency; label: string }[] = [
   { value: "daily", label: "Daily" },
@@ -37,6 +38,7 @@ function formatDateTime(value?: string | null): string {
 }
 
 export default function ProductSearchPage() {
+  const { toast } = useToast();
   const [drugs, setDrugs] = useState<DrugConcept[]>([]);
   const [selected, setSelected] = useState<Record<string, DrugConcept>>({});
   const [filter, setFilter] = useState("");
@@ -114,6 +116,7 @@ export default function ProductSearchPage() {
       await fn();
     } catch (e) {
       setError(String(e));
+      toast("That action did not complete", "error", String(e));
     } finally {
       setBusy(false);
     }
@@ -180,6 +183,7 @@ export default function ProductSearchPage() {
                   setCatalog(s);
                   await loadDrugs("");
                   setMsg(`Downloaded ${s.total.toLocaleString()} drugs.`);
+                  toast("Drug list downloaded", "success", `${s.total.toLocaleString()} drugs available offline.`);
                 } finally {
                   setSyncing(false);
                 }
@@ -343,6 +347,13 @@ export default function ProductSearchPage() {
                 setMsg(
                   `Searched ${res.requested} drug(s): ${res.new_articles} new article(s), ${res.failed} failed.`
                 );
+                toast(
+                  res.failed
+                    ? `Search finished with ${res.failed} failure(s)`
+                    : `${res.new_articles} new article(s) found`,
+                  res.failed ? "info" : "success",
+                  `${res.requested} drug(s) searched — new items are in your workspace.`
+                );
                 await Promise.all([loadDrugs(filter.trim()), loadSchedules()]);
               })
             }
@@ -442,6 +453,11 @@ export default function ProductSearchPage() {
                 setMsg(
                   `Scheduled ${created.length} ${frequency} search(es) until ${endDate}. First run starts within a minute.`
                 );
+                toast(
+                  `${created.length} ${frequency} search(es) scheduled`,
+                  "success",
+                  `Runs until ${endDate}. First run starts within a minute.`
+                );
               })
             }
           >
@@ -507,6 +523,7 @@ export default function ProductSearchPage() {
                             await api.deleteSchedule(s.id);
                             await loadSchedules();
                             setMsg("Schedule stopped.");
+                            toast("Schedule stopped", "success");
                           })
                         }
                       >
@@ -521,6 +538,7 @@ export default function ProductSearchPage() {
                             await api.updateSchedule(s.id, { is_active: true });
                             await loadSchedules();
                             setMsg("Schedule resumed.");
+                            toast("Schedule resumed", "success");
                           })
                         }
                       >

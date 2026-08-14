@@ -159,6 +159,15 @@ def upgrade() -> None:
                 batch.add_column(sa.Column(name, type_, nullable=True))
         if "article_excerpts" not in screening_cols:
             batch.add_column(sa.Column("article_excerpts", sa.JSON(), nullable=True))
+            # ArticleDetail.latest_screening.article_excerpts is a required
+            # list, so opening an article scored before this column existed
+            # fails response validation until it holds an array.
+            op.execute(
+                sa.text(
+                    "UPDATE screening_results SET article_excerpts = '[]' "
+                    "WHERE article_excerpts IS NULL"
+                )
+            )
         if "confidence" not in screening_cols:
             batch.add_column(sa.Column("confidence", sa.Float(), nullable=True))
         if "processed_at" not in screening_cols:

@@ -9,9 +9,22 @@ import {
   SIGNAL_TAGS,
 } from "../api";
 import { useAuth } from "../auth";
+import { useToast } from "../toast";
+
+// What each decision means once recorded, so the confirmation says what
+// happened rather than echoing the button label back.
+const DECISION_RESULT: Record<string, string> = {
+  confirm_valid_icsr: "Approved for submission — ready to generate the XML.",
+  confirm_not_case: "Recorded as not a case and archived.",
+  request_second_review: "Sent for second review.",
+  defer_full_text: "Deferred pending full text.",
+  confirm_signal: "Confirmed as a signal.",
+  reject_signal: "Signal rejected.",
+};
 
 export default function ArticlePage() {
   const { user } = useAuth();
+  const { toast } = useToast();
   const { id } = useParams();
   const articleId = Number(id);
   const [article, setArticle] = useState<ArticleDetail | null>(null);
@@ -89,16 +102,28 @@ export default function ArticlePage() {
           .filter(Boolean),
       });
       await load();
+      toast(
+        "Decision recorded",
+        "success",
+        DECISION_RESULT[action] ?? "Saved to the audit trail."
+      );
     } catch (e) {
       setError(String(e));
+      toast("Decision was not recorded", "error", String(e));
     } finally {
       setBusy(false);
     }
   }
 
   async function claim() {
-    await api.claim(articleId);
-    await load();
+    try {
+      await api.claim(articleId);
+      await load();
+      toast("Assigned to you", "success");
+    } catch (e) {
+      setError(String(e));
+      toast("Could not assign this report", "error", String(e));
+    }
   }
 
   async function saveClassification() {
@@ -112,8 +137,10 @@ export default function ArticlePage() {
         rationale,
       );
       await load();
+      toast("Classification saved", "success", humanise(classification));
     } catch (e) {
       setError(String(e));
+      toast("Classification was not saved", "error", String(e));
     } finally {
       setBusy(false);
     }
@@ -121,9 +148,18 @@ export default function ArticlePage() {
 
   async function saveTags() {
     setBusy(true); setError("");
-    try { await api.setSignalTags(articleId, signalTags); await load(); }
-    catch (e) { setError(String(e)); }
-    finally { setBusy(false); }
+    try {
+      await api.setSignalTags(articleId, signalTags);
+      await load();
+      toast(
+        "Signal tags saved",
+        "success",
+        signalTags.length ? signalTags.map(humanise).join(", ") : "All tags cleared."
+      );
+    } catch (e) {
+      setError(String(e));
+      toast("Signal tags were not saved", "error", String(e));
+    } finally { setBusy(false); }
   }
 
   if (!article) {
@@ -334,34 +370,6 @@ export default function ArticlePage() {
               </select>
             </label>
           </div>
-          <div className="grid-2">
-            <label>
-              Patient age / range
-              <input value={patientAgeRange} onChange={(e) => setPatientAgeRange(e.target.value)} placeholder="e.g. 45 years" />
-            </label>
-            <label>
-              Patient sex
-              <select value={patientSex} onChange={(e) => setPatientSex(e.target.value)}>
-                <option value="">Not stated</option>
-                <option value="female">Female</option>
-                <option value="male">Male</option>
-                <option value="other">Other / as reported</option>
-                <option value="unknown">Unknown</option>
-              </select>
-            </label>
-            <label>
-              Country of occurrence
-              <input value={patientCountry} onChange={(e) => setPatientCountry(e.target.value)} placeholder="As stated in the article" />
-            </label>
-            <label>
-              Suspect product(s)
-              <input value={suspectProducts} onChange={(e) => setSuspectProducts(e.target.value)} placeholder="Comma-separated" />
-            </label>
-          </div>
-          <label>
-            Event terms
-            <input value={eventTerms} onChange={(e) => setEventTerms(e.target.value)} placeholder="Comma-separated adverse events" />
-          </label>
           <div className="row-actions" style={{ marginBottom: "1rem" }}>
             <button className="btn" disabled={busy || !classification} onClick={saveClassification}>Save classification</button>
           </div>
@@ -389,10 +397,49 @@ export default function ArticlePage() {
         </section>}
 
         <section className="card no-print">
-          <h2>ICSR criteria checklist</h2>
+          <h2>Case assessment</h2>
           <p className="muted">
             Explicit reviewer completion — not inferred silently (ICH E2D).
+            Everything in this panel is saved by the decision you record at the
+            bottom, so record a decision once the details are right.
           </p>
+
+          <h3>Case details</h3>
+          <p className="muted">
+            These become the regulatory submission. Leave a field blank where
+            the article does not state it — the export marks it as not stated
+            rather than guessing.
+          </p>
+          <div className="grid-2">
+            <label>
+              Patient age / range
+              <input value={patientAgeRange} onChange={(e) => setPatientAgeRange(e.target.value)} placeholder="e.g. 45 years" />
+            </label>
+            <label>
+              Patient sex
+              <select value={patientSex} onChange={(e) => setPatientSex(e.target.value)}>
+                <option value="">Not stated</option>
+                <option value="female">Female</option>
+                <option value="male">Male</option>
+                <option value="other">Other / as reported</option>
+                <option value="unknown">Unknown</option>
+              </select>
+            </label>
+            <label>
+              Country of occurrence
+              <input value={patientCountry} onChange={(e) => setPatientCountry(e.target.value)} placeholder="As stated in the article" />
+            </label>
+            <label>
+              Suspect product(s)
+              <input value={suspectProducts} onChange={(e) => setSuspectProducts(e.target.value)} placeholder="Comma-separated" />
+            </label>
+          </div>
+          <label>
+            Adverse event terms
+            <input value={eventTerms} onChange={(e) => setEventTerms(e.target.value)} placeholder="Comma-separated adverse events" />
+          </label>
+
+          <h3>Reportability criteria</h3>
           <div className="checklist">
             <label>
               <input
