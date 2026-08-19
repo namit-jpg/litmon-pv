@@ -379,8 +379,9 @@ export type ExportPackage = {
   created_at: string;
 };
 
-/** A paper cited by an assistant answer. `article_id` is present when the paper
- *  is already a monitored article, so the citation can link to its report. */
+/** One paper retrieved for an assistant answer. `article_id` is present when
+ *  the paper is already a monitored article. `cited` distinguishes papers the
+ *  answer actually drew on from ones merely retrieved. */
 export type AssistantSource = {
   number: number;
   pmid: string;
@@ -389,11 +390,24 @@ export type AssistantSource = {
   pub_date?: string | null;
   url: string;
   article_id?: number | null;
+  cited: boolean;
+};
+
+/** A span of answer text with the citations the API attached to it. Citations
+ *  come from the model's citation mechanism, not from prose it wrote, so each
+ *  one names a source and quotes the sentence it came from. */
+export type AssistantSegment = {
+  text: string;
+  citations: number[];
+  quotes: string[];
 };
 
 export type AssistantAnswer = {
   question: string;
+  /** The self-contained form — differs when the question was a follow-up. */
+  interpreted_question: string;
   answer: string;
+  segments: AssistantSegment[];
   sources: AssistantSource[];
   pubmed_query: string;
   total_matches: number;
@@ -403,6 +417,8 @@ export type AssistantAnswer = {
   notice: string;
   warning?: string | null;
 };
+
+export type AssistantTurn = { question: string; answer: string };
 
 export type AuditEvent = {
   id: number;
@@ -1058,10 +1074,17 @@ export const api = {
     request<Record<string, unknown>[]>(
       `/api/jobs${status ? `?status=${status}` : ""}`
     ),
-  assistantAsk: (question: string, limit?: number) =>
+  assistantAsk: (
+    question: string,
+    opts?: { limit?: number; history?: AssistantTurn[] },
+  ) =>
     request<AssistantAnswer>("/api/assistant/ask", {
       method: "POST",
-      body: JSON.stringify({ question, ...(limit ? { limit } : {}) }),
+      body: JSON.stringify({
+        question,
+        ...(opts?.limit ? { limit: opts.limit } : {}),
+        ...(opts?.history?.length ? { history: opts.history } : {}),
+      }),
     }),
   batchRescore: (body: { article_ids?: number[]; all_open?: boolean }) =>
     request<Record<string, unknown>>("/api/jobs/batch-rescore", {

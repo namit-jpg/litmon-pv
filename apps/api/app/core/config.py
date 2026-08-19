@@ -35,6 +35,14 @@ class Settings(BaseSettings):
     llm_model: str = "grok-2-latest"
     llm_mock: bool = True
 
+    # The assistant answers a handful of questions a day, where answer quality
+    # is what matters; screening runs over every article ingested, where cost
+    # and throughput do. They deliberately do not share a model.
+    assistant_model: str = "claude-opus-5"
+    # Thinking depth for the assistant. `high` is the API default; `low` and
+    # `medium` are the cost levers if question volume grows.
+    assistant_effort: str = "high"
+
     # NLM RxNorm drug catalogue (free, no API key). Mirrored locally so the
     # product picker stays instant and works without a network.
     rxnorm_base_url: str = "https://rxnav.nlm.nih.gov/REST"

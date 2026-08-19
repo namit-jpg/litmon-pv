@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, AssistantAnswer } from "../api";
+import { api, AssistantAnswer, AssistantTurn } from "../api";
 
 /** One exchange. Kept in page state only — an assistant question is a lookup,
  *  not a case record, so there is nothing to persist between visits. The audit
@@ -15,15 +15,19 @@ type Exchange = {
 /** Openers that show what the surface is for without the reviewer having to
  *  guess: a safety profile, an interaction, a population, a signal question. */
 const EXAMPLES = [
-  "What adverse reactions are reported with mupirocin in neonates?",
+  "What adverse reactions are reported with mupirocin?",
   "Is there evidence linking fusidic acid to hepatotoxicity?",
   "What is known about zinc supplementation and copper deficiency?",
   "Has centhaquine been studied in hypovolaemic shock?",
 ];
 
-/** Render an answer, turning the model's [n] citations into links to the source
- *  list. The regex is deliberately narrow — only bracketed digits become links,
- *  so ordinary bracketed prose is left alone. */
+/** Render an answer from its cited segments.
+ *
+ *  Citations are structured data from the API rather than markers the model
+ *  wrote into prose, so each one is anchored to the span it supports and
+ *  carries the sentence it quotes — the marker's tooltip is the evidence, not
+ *  a restatement of the title.
+ */
 function AnswerBody({
   answer,
   turnId,
@@ -34,30 +38,31 @@ function AnswerBody({
   const byNumber = new Map(answer.sources.map((s) => [s.number, s]));
   return (
     <div className="chat-answer">
-      {answer.answer.split("\n").map((paragraph, index) => {
-        if (!paragraph.trim()) return null;
-        const pieces = paragraph.split(/(\[\d+\])/g);
-        return (
-          <p key={index}>
-            {pieces.map((piece, pieceIndex) => {
-              const match = /^\[(\d+)\]$/.exec(piece);
-              if (!match) return <span key={pieceIndex}>{piece}</span>;
-              const source = byNumber.get(Number(match[1]));
-              if (!source) return <span key={pieceIndex}>{piece}</span>;
+      <p>
+        {answer.segments.map((segment, index) => (
+          <span key={index}>
+            {segment.text}
+            {segment.citations.map((number, citationIndex) => {
+              const source = byNumber.get(number);
+              const quote = segment.quotes[citationIndex];
               return (
                 <a
-                  key={pieceIndex}
+                  key={number}
                   className="cite"
-                  href={`#source-${turnId}-${source.number}`}
-                  title={source.title}
+                  href={`#source-${turnId}-${number}`}
+                  title={
+                    quote
+                      ? `“${quote}”\n\n— ${source?.title ?? `source ${number}`}`
+                      : source?.title
+                  }
                 >
-                  {match[1]}
+                  {number}
                 </a>
               );
             })}
-          </p>
-        );
-      })}
+          </span>
+        ))}
+      </p>
     </div>
   );
 }
@@ -75,20 +80,24 @@ export default function ChatPage() {
   async function ask(text: string) {
     const trimmed = text.trim();
     if (trimmed.length < 3 || busy) return;
+    // Prior turns let the server resolve a follow-up ("and in children?")
+    // against what came before. Only answered turns are useful context.
+    const history: AssistantTurn[] = exchanges
+      .filter((x): x is Exchange & { answer: AssistantAnswer } => !!x.answer)
+      .map((x) => ({ question: x.question, answer: x.answer.answer }));
+
     const id = Date.now();
     setExchanges((current) => [...current, { id, question: trimmed }]);
     setQuestion("");
     setBusy(true);
     try {
-      const answer = await api.assistantAsk(trimmed);
+      const answer = await api.assistantAsk(trimmed, { history });
       setExchanges((current) =>
         current.map((x) => (x.id === id ? { ...x, answer } : x)),
       );
     } catch (caught) {
       setExchanges((current) =>
-        current.map((x) =>
-          x.id === id ? { ...x, error: String(caught) } : x,
-        ),
+        current.map((x) => (x.id === id ? { ...x, error: String(caught) } : x)),
       );
     } finally {
       setBusy(false);
@@ -102,8 +111,8 @@ export default function ChatPage() {
         <h1>Ask the literature</h1>
         <p className="sub">
           A free-text question instead of a product and a search string. Answers
-          are written only from the PubMed abstracts cited beneath them, so every
-          claim can be traced to a paper.
+          are written only from the PubMed abstracts cited beneath them, and
+          every citation quotes the sentence it came from.
         </p>
       </div>
 
@@ -121,7 +130,8 @@ export default function ChatPage() {
           <div className="chat-empty">
             <p className="muted">
               Ask about a molecule, an event, a population, or anything else the
-              published literature would answer.
+              published literature would answer. Follow-up questions work — ask
+              “and in neonates?” and it will carry the subject forward.
             </p>
             <div className="chat-examples">
               {EXAMPLES.map((example) => (
@@ -143,6 +153,12 @@ export default function ChatPage() {
                 <div className="chat-question">
                   <span className="lbl">Question</span>
                   <p>{exchange.question}</p>
+                  {exchange.answer &&
+                  exchange.answer.interpreted_question !== exchange.question ? (
+                    <span className="chat-interpreted">
+                      Read as: {exchange.answer.interpreted_question}
+                    </span>
+                  ) : null}
                 </div>
 
                 {exchange.error ? (
@@ -165,6 +181,7 @@ export default function ChatPage() {
                         matches
                       </span>
                       <span className="pill mono">
+                        {exchange.answer.sources.filter((s) => s.cited).length} of{" "}
                         {exchange.answer.sources.length} cited
                       </span>
                       {exchange.answer.synthesised ? (
@@ -191,6 +208,7 @@ export default function ChatPage() {
                             <li
                               key={source.pmid}
                               id={`source-${exchange.id}-${source.number}`}
+                              className={source.cited ? "is-cited" : ""}
                             >
                               <a
                                 href={source.url}
@@ -205,14 +223,23 @@ export default function ChatPage() {
                                 {" · PMID "}
                                 {source.pmid}
                               </span>
-                              {source.article_id ? (
-                                <Link
-                                  className="pill acc"
-                                  to={`/articles/${source.article_id}`}
-                                >
-                                  Monitored — open report
-                                </Link>
-                              ) : null}
+                              <span className="chat-source-tags">
+                                {source.cited ? (
+                                  <span className="pill ok">Cited</span>
+                                ) : (
+                                  <span className="pill">
+                                    Retrieved, not cited
+                                  </span>
+                                )}
+                                {source.article_id ? (
+                                  <Link
+                                    className="pill acc"
+                                    to={`/articles/${source.article_id}`}
+                                  >
+                                    Monitored — open report
+                                  </Link>
+                                ) : null}
+                              </span>
                             </li>
                           ))}
                         </ol>
@@ -236,7 +263,11 @@ export default function ChatPage() {
             aria-label="Your question"
             rows={2}
             value={question}
-            placeholder="Ask anything the published literature would answer…"
+            placeholder={
+              exchanges.length
+                ? "Ask a follow-up — the subject carries forward…"
+                : "Ask anything the published literature would answer…"
+            }
             onChange={(event) => setQuestion(event.target.value)}
             onKeyDown={(event) => {
               // Enter sends; Shift+Enter is a newline, as in any chat box.
@@ -261,8 +292,15 @@ export default function ChatPage() {
                 onClick={() => setExchanges([])}
                 disabled={busy}
               >
-                Clear
+                New conversation
               </button>
+            ) : null}
+            {exchanges.length > 0 ? (
+              <span className="muted">
+                {exchanges.length === 1
+                  ? "Follow-ups use this turn for context."
+                  : `Follow-ups use the ${Math.min(exchanges.length, 4)} most recent turns for context.`}
+              </span>
             ) : null}
           </div>
         </form>

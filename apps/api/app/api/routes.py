@@ -2912,12 +2912,18 @@ async def assistant_ask_question(
 ) -> dict:
     """Answer a free-text medical question from PubMed, with citations.
 
-    Read-only by design: it never touches a case record. The question and the
-    query it was translated into are written to the audit trail, because an
-    inspector asking "what was this system used to look up" deserves an answer.
+    Read-only by design: it never touches a case record. The question, the query
+    it was resolved into, and the papers actually cited are written to the audit
+    trail — an inspector asking "what was this system used to look up, and on
+    what evidence" deserves an answer.
     """
     try:
-        result = await assistant_ask(db, body.question, limit=body.limit)
+        result = await assistant_ask(
+            db,
+            body.question,
+            limit=body.limit,
+            history=[(turn.question, turn.answer) for turn in body.history],
+        )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
@@ -2929,18 +2935,26 @@ async def assistant_ask_question(
         entity_id="0",
         payload={
             "question": result.question,
+            "interpreted_question": result.interpreted_question,
             "pubmed_query": result.pubmed_query,
             "source_pmids": [s.pmid for s in result.sources],
+            "cited_pmids": [s.pmid for s in result.sources if s.cited],
             "total_matches": result.total_matches,
             "synthesised": result.synthesised,
             "model_id": result.model_id,
+            "follow_up": bool(body.history),
         },
     )
     db.commit()
 
     return {
         "question": result.question,
+        "interpreted_question": result.interpreted_question,
         "answer": result.answer,
+        "segments": [
+            {"text": seg.text, "citations": seg.citations, "quotes": seg.quotes}
+            for seg in result.segments
+        ],
         "sources": [
             {
                 "number": s.number,
@@ -2950,6 +2964,7 @@ async def assistant_ask_question(
                 "pub_date": s.pub_date,
                 "url": s.url,
                 "article_id": s.article_id,
+                "cited": s.cited,
             }
             for s in result.sources
         ],

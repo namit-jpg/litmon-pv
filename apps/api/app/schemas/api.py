@@ -632,11 +632,21 @@ class RegulatoryRecordOut(BaseModel):
 # ── Literature assistant ─────────────────────────────────────────────
 
 
+class AssistantTurn(BaseModel):
+    """One prior exchange, so a follow-up can be resolved against it."""
+
+    question: str = Field(min_length=1, max_length=1000)
+    answer: str = Field(min_length=1, max_length=8000)
+
+
 class AssistantAskIn(BaseModel):
     question: str = Field(min_length=3, max_length=1000)
     # How many papers to ground the answer in. Kept small: more sources means a
     # longer wait and a vaguer answer, not a better one.
     limit: int = Field(default=6, ge=1, le=12)
+    #: Prior turns of this conversation, oldest first. Used only to resolve the
+    #: question — each answer is grounded in its own fresh retrieval.
+    history: list[AssistantTurn] = Field(default_factory=list, max_length=20)
 
 
 class AssistantSourceOut(BaseModel):
@@ -649,11 +659,26 @@ class AssistantSourceOut(BaseModel):
     #: Set when this paper is already a monitored article, so the client can
     #: link to its detection report instead of sending the reviewer to PubMed.
     article_id: Optional[int]
+    #: Whether the answer actually drew on it. Retrieved is not cited.
+    cited: bool = False
+
+
+class AssistantSegmentOut(BaseModel):
+    """A span of answer text with the citations the API attached to it."""
+
+    text: str
+    citations: list[int] = Field(default_factory=list)
+    #: The sentence each citation quotes, parallel to `citations`.
+    quotes: list[str] = Field(default_factory=list)
 
 
 class AssistantAnswerOut(BaseModel):
     question: str
+    #: The self-contained form of the question. Differs from `question` when the
+    #: reviewer asked a follow-up that needed the conversation to make sense.
+    interpreted_question: str
     answer: str
+    segments: list[AssistantSegmentOut]
     sources: list[AssistantSourceOut]
     pubmed_query: str
     total_matches: int

@@ -1,16 +1,27 @@
 """Natural-language question answering grounded in PubMed abstracts.
 
 This is a retrieval surface, not a reasoning one. Every answer is composed only
-from abstracts fetched for the question at hand, each claim carries the number of
-the source it came from, and the sources are returned alongside so a reviewer can
-read the paper rather than trust the summary. Nothing here writes to a case
-record, and no answer is a regulatory or clinical determination — the workflow in
-the rest of the application remains the place where decisions are made.
+from abstracts fetched for the question at hand, and the citations are produced
+by the API's own citation mechanism rather than written into prose by the model:
+each cited span comes back as structured data naming the source document and
+quoting the sentence it came from. In a pharmacovigilance setting that is the
+difference between a claim a reviewer can check and one they have to trust.
 
-When no LLM is configured the service still answers, extractively: the same
-retrieved articles with their own opening sentences, clearly labelled as
-retrieval without synthesis. That keeps the feature usable offline and makes the
-degraded mode obvious instead of silent.
+Nothing here writes to a case record, and no answer is a regulatory or clinical
+determination — the workflow in the rest of the application remains the place
+where decisions are made.
+
+Two model calls per question, each using the feature that fits it:
+
+1.  Question resolution — a **structured output** call that resolves a follow-up
+    against the conversation so far ("and in children?") into a self-contained
+    question, and translates it into a PubMed query. A JSON schema guarantees the
+    shape, so there is no prose to clean up.
+2.  Answering — a **citations** call over the retrieved abstracts as document
+    blocks, with adaptive thinking for reasoning across sources that disagree.
+
+When no API key is configured the service still answers, extractively, and says
+so — the degraded mode is visible rather than silent.
 """
 
 from __future__ import annotations
@@ -21,7 +32,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-import httpx
+import anthropic
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -31,38 +42,65 @@ from app.services.pubmed.client import PubMedArticleDTO, PubMedClient
 
 logger = logging.getLogger(__name__)
 
-LLM_TIMEOUT_SECONDS = 45.0
-MAX_ABSTRACT_CHARS = 1800
+REQUEST_TIMEOUT_SECONDS = 120.0
+MAX_ABSTRACT_CHARS = 6000
+#: Turns of prior conversation given to the resolver. Enough to resolve a
+#: pronoun or an elliptical follow-up; short enough to stay cheap and to keep an
+#: old topic from dragging a new question back toward it.
+HISTORY_TURNS = 4
 
 NOTICE = (
-    "Answers are composed only from the PubMed abstracts listed as sources. "
-    "This is a literature-retrieval aid, not a clinical or regulatory "
-    "determination, and it is not part of the validated review workflow."
+    "Answers are composed only from the PubMed abstracts listed as sources, and "
+    "each citation is linked to the sentence it came from. This is a "
+    "literature-retrieval aid, not a clinical or regulatory determination, and "
+    "it is not part of the validated review workflow."
 )
 
 ANSWER_SYSTEM = """You answer medical and pharmacovigilance questions for a \
-qualified safety reviewer, using only the numbered sources supplied.
+qualified safety reviewer, using only the documents supplied.
 
-Rules:
 - Use only the supplied abstracts. Never add facts from your own knowledge.
-- Cite the source number in square brackets after each claim, like [2]. Cite \
-every claim.
-- If the sources do not answer the question, say so plainly and describe what \
+- If the documents do not answer the question, say so plainly and describe what \
 they do cover. Do not speculate to fill the gap.
 - Report what the literature states. Do not give treatment, dosing or \
 prescribing recommendations, and do not address the reader as a patient.
-- Note disagreement between sources when it exists rather than averaging it away.
+- Where sources disagree, say so and attribute each position.
+- Distinguish the strength of evidence: a case report, a cohort study and a \
+computational prediction do not carry the same weight, and saying which is which \
+matters more to a reviewer than a confident summary.
 - Prose, not bullet lists, unless the question asks for an enumeration. Aim for \
-120-220 words.
-- Plain text only. No markdown headings or bold."""
+120-220 words. Plain text — no markdown headings or bold."""
 
-QUERY_SYSTEM = """Translate the reviewer's question into a single PubMed search \
-query.
+RESOLVER_SYSTEM = """You prepare a reviewer's question for a PubMed search.
 
-Return only the query, no explanation. Use Boolean operators and quoted phrases. \
-Prefer ingredient and MeSH-style vocabulary over brand names. Keep it broad \
-enough to return results — two or three concepts joined with AND is usually \
-right. Never add date filters."""
+Given the conversation so far and their latest message, produce:
+
+- standalone_question: the latest message rewritten to stand on its own, with \
+pronouns and ellipsis resolved from the conversation. If it already stands \
+alone, return it unchanged.
+- pubmed_query: a PubMed search query for that question. Boolean operators and \
+quoted phrases. Prefer ingredient and MeSH-style vocabulary over brand names. \
+Two or three concepts joined with AND is usually right — broad enough to return \
+results. Never add date filters.
+
+Resolve against the conversation, but do not widen the question: if the reviewer \
+narrows to a population or an outcome, the query narrows with it."""
+
+RESOLVER_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "standalone_question": {
+            "type": "string",
+            "description": "The latest message, rewritten to stand alone.",
+        },
+        "pubmed_query": {
+            "type": "string",
+            "description": "A PubMed query for the standalone question.",
+        },
+    },
+    "required": ["standalone_question", "pubmed_query"],
+    "additionalProperties": False,
+}
 
 _STOPWORDS = {
     "a", "about", "after", "all", "am", "an", "and", "any", "are", "as", "at",
@@ -78,8 +116,10 @@ _STOPWORDS = {
 
 @dataclass
 class AssistantSource:
-    """One cited paper. `article_id` is set when we already monitor it, so the
-    reviewer can jump straight to its detection report instead of PubMed."""
+    """One retrieved paper. `article_id` is set when we already monitor it, so a
+    citation can link to its detection report instead of PubMed. `cited` is set
+    when the answer actually drew on it — retrieved and cited are not the same
+    thing, and showing them as one overstates the evidence behind an answer."""
 
     number: int
     pmid: str
@@ -89,12 +129,28 @@ class AssistantSource:
     url: str
     abstract: str | None
     article_id: int | None = None
+    cited: bool = False
+
+
+@dataclass
+class AnswerSegment:
+    """A run of answer text with the citations the API attached to it."""
+
+    text: str
+    #: Source numbers this span was drawn from.
+    citations: list[int] = field(default_factory=list)
+    #: The sentence each citation quotes, parallel to `citations`.
+    quotes: list[str] = field(default_factory=list)
 
 
 @dataclass
 class AssistantAnswer:
     question: str
+    #: The resolved, self-contained form. Differs from `question` when the
+    #: reviewer asked a follow-up.
+    interpreted_question: str
     answer: str
+    segments: list[AnswerSegment] = field(default_factory=list)
     sources: list[AssistantSource] = field(default_factory=list)
     pubmed_query: str = ""
     total_matches: int = 0
@@ -102,6 +158,16 @@ class AssistantAnswer:
     synthesised: bool = False
     notice: str = NOTICE
     warning: str | None = None
+
+
+def _client() -> anthropic.AsyncAnthropic | None:
+    """The Anthropic client, or None when the assistant is unconfigured."""
+    settings = get_settings()
+    if settings.llm_mock or not settings.llm_api_key:
+        return None
+    return anthropic.AsyncAnthropic(
+        api_key=settings.llm_api_key, timeout=REQUEST_TIMEOUT_SECONDS
+    )
 
 
 def _keyword_query(question: str) -> str:
@@ -119,59 +185,145 @@ def _keyword_query(question: str) -> str:
     return " AND ".join(dict.fromkeys(kept))
 
 
-async def _llm_text(system: str, user: str, *, max_tokens: int) -> tuple[str, str] | None:
-    """One chat completion returning plain text, or None if unavailable.
-
-    Deliberately does not retry. A reviewer is waiting on this, and a stale
-    answer minutes later is worse than the extractive fallback shown promptly.
-    """
-    settings = get_settings()
-    if settings.llm_mock or not settings.llm_api_key:
-        return None
-    try:
-        async with httpx.AsyncClient(timeout=LLM_TIMEOUT_SECONDS) as client:
-            resp = await client.post(
-                f"{settings.llm_base_url.rstrip('/')}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {settings.llm_api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": settings.llm_model,
-                    "temperature": 0.2,
-                    "max_tokens": max_tokens,
-                    "messages": [
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": user},
-                    ],
-                },
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            content = (data["choices"][0]["message"]["content"] or "").strip()
-            model = str(data.get("model") or settings.llm_model)
-            return (content, model) if content else None
-    except Exception as exc:
-        logger.warning("assistant LLM call failed: %s: %s", type(exc).__name__, exc)
-        return None
-
-
-def _clean_query(raw: str) -> str:
-    """Strip the wrappers a model sometimes puts around a query."""
-    text = raw.strip().strip("`").strip()
-    if text.lower().startswith("query:"):
-        text = text[6:].strip()
-    # A model that ignored the instruction and explained itself: take line one.
-    return text.splitlines()[0].strip() if text else text
-
-
 def _first_sentences(text: str, count: int = 2) -> str:
     parts = re.split(r"(?<=[.!?])\s+", (text or "").strip())
     return " ".join(p for p in parts[:count] if p).strip()
 
 
+async def _resolve_question(
+    client: anthropic.AsyncAnthropic,
+    question: str,
+    history: list[tuple[str, str]],
+) -> tuple[str, str] | None:
+    """Resolve a follow-up and translate it into a PubMed query.
+
+    Structured output rather than free text: the schema guarantees both fields
+    are present, so a malformed reply can't silently become the search query.
+    """
+    settings = get_settings()
+    turns: list[dict[str, Any]] = []
+    for prior_question, prior_answer in history[-HISTORY_TURNS:]:
+        turns.append({"role": "user", "content": prior_question})
+        # The prior answer is truncated: the resolver needs enough to resolve a
+        # reference, not the whole prose.
+        turns.append({"role": "assistant", "content": prior_answer[:600]})
+    turns.append({"role": "user", "content": question})
+
+    try:
+        response = await client.messages.create(
+            model=settings.assistant_model,
+            max_tokens=2000,
+            system=RESOLVER_SYSTEM,
+            messages=turns,
+            output_config={
+                "format": {"type": "json_schema", "schema": RESOLVER_SCHEMA},
+                # Resolving a reference is not hard reasoning; spend the tokens
+                # on the answer instead.
+                "effort": "low",
+            },
+        )
+    except Exception as exc:
+        logger.warning("assistant resolver failed: %s: %s", type(exc).__name__, exc)
+        return None
+
+    import json
+
+    text = next((b.text for b in response.content if b.type == "text"), "")
+    try:
+        data = json.loads(text)
+    except Exception:
+        logger.warning("assistant resolver returned non-JSON")
+        return None
+    standalone = str(data.get("standalone_question") or "").strip()
+    query = str(data.get("pubmed_query") or "").strip()
+    return (standalone or question, query) if query else None
+
+
+def _known_article_ids(db: Session, pmids: list[str]) -> dict[str, int]:
+    if not pmids:
+        return {}
+    rows = db.execute(
+        select(Article.pmid, Article.id).where(Article.pmid.in_(pmids))
+    ).all()
+    return {str(pmid): int(article_id) for pmid, article_id in rows}
+
+
+def _to_sources(
+    db: Session, articles: list[PubMedArticleDTO]
+) -> list[AssistantSource]:
+    known = _known_article_ids(db, [a.pmid for a in articles])
+    return [
+        AssistantSource(
+            number=index,
+            pmid=article.pmid,
+            title=article.title,
+            journal=article.journal,
+            pub_date=article.pub_date.isoformat() if article.pub_date else None,
+            url=article.pubmed_url,
+            abstract=article.abstract,
+            article_id=known.get(article.pmid),
+        )
+        for index, article in enumerate(articles, start=1)
+    ]
+
+
+def _document_blocks(sources: list[AssistantSource]) -> list[dict[str, Any]]:
+    """Each abstract as a citable document.
+
+    `citations` is enabled on every block — the API requires all or none — so
+    every claim the model makes can be traced to the sentence behind it.
+    """
+    blocks: list[dict[str, Any]] = []
+    for source in sources:
+        text = (source.abstract or "No abstract available.")[:MAX_ABSTRACT_CHARS]
+        blocks.append(
+            {
+                "type": "document",
+                "source": {"type": "text", "media_type": "text/plain", "data": text},
+                "title": f"[{source.number}] {source.title}",
+                "context": (
+                    f"PMID {source.pmid}"
+                    f" · {source.journal or 'journal not stated'}"
+                    f"{f' · {source.pub_date}' if source.pub_date else ''}"
+                ),
+                "citations": {"enabled": True},
+            }
+        )
+    return blocks
+
+
+def _read_segments(
+    content: list[Any], sources: list[AssistantSource]
+) -> list[AnswerSegment]:
+    """Turn the API's cited text blocks into segments.
+
+    With citations enabled the response arrives as several text blocks, the
+    cited ones carrying a `citations` array. `document_index` is the position of
+    the document we sent, which is the source number minus one.
+    """
+    segments: list[AnswerSegment] = []
+    for block in content:
+        if getattr(block, "type", None) != "text":
+            continue
+        numbers: list[int] = []
+        quotes: list[str] = []
+        for citation in getattr(block, "citations", None) or []:
+            index = getattr(citation, "document_index", None)
+            if index is None or not (0 <= index < len(sources)):
+                continue
+            source = sources[index]
+            source.cited = True
+            if source.number not in numbers:
+                numbers.append(source.number)
+                quotes.append((getattr(citation, "cited_text", "") or "").strip())
+        segments.append(
+            AnswerSegment(text=block.text, citations=numbers, quotes=quotes)
+        )
+    return segments
+
+
 def _extractive_answer(sources: list[AssistantSource]) -> str:
-    """Answer without an LLM: say so, then hand over the evidence."""
+    """Answer without a model: say so, then hand over the evidence."""
     if not sources:
         return (
             "No PubMed records matched this question, so there is nothing to "
@@ -190,87 +342,53 @@ def _extractive_answer(sources: list[AssistantSource]) -> str:
     return "\n".join(lines)
 
 
-def _known_article_ids(db: Session, pmids: list[str]) -> dict[str, int]:
-    if not pmids:
-        return {}
-    rows = db.execute(
-        select(Article.pmid, Article.id).where(Article.pmid.in_(pmids))
-    ).all()
-    return {str(pmid): int(article_id) for pmid, article_id in rows}
+async def ask(
+    db: Session,
+    question: str,
+    *,
+    limit: int = 6,
+    history: list[tuple[str, str]] | None = None,
+) -> AssistantAnswer:
+    """Answer `question` from PubMed, with citations.
 
-
-def _to_sources(
-    db: Session, articles: list[PubMedArticleDTO]
-) -> list[AssistantSource]:
-    known = _known_article_ids(db, [a.pmid for a in articles])
-    sources: list[AssistantSource] = []
-    for index, article in enumerate(articles, start=1):
-        sources.append(
-            AssistantSource(
-                number=index,
-                pmid=article.pmid,
-                title=article.title,
-                journal=article.journal,
-                pub_date=article.pub_date.isoformat() if article.pub_date else None,
-                url=article.pubmed_url,
-                abstract=article.abstract,
-                article_id=known.get(article.pmid),
-            )
-        )
-    return sources
-
-
-def _grounding_payload(question: str, sources: list[AssistantSource]) -> str:
-    blocks = [f"QUESTION: {question}", "", "SOURCES:"]
-    for source in sources:
-        abstract = (source.abstract or "No abstract available.")[:MAX_ABSTRACT_CHARS]
-        blocks.append(
-            f"[{source.number}] {source.title}\n"
-            f"    Journal: {source.journal or 'not stated'}"
-            f" | PMID {source.pmid}\n"
-            f"    Abstract: {abstract}"
-        )
-    return "\n".join(blocks)
-
-
-async def ask(db: Session, question: str, *, limit: int = 6) -> AssistantAnswer:
-    """Answer `question` from PubMed, with citations."""
+    `history` is the prior (question, answer) turns of this conversation, oldest
+    first. It is used only to resolve the question — each answer is grounded in
+    a fresh retrieval, so a follow-up never inherits the previous turn's sources.
+    """
     question = question.strip()
     if not question:
         raise ValueError("A question is required")
+    history = history or []
 
+    client = _client()
     heuristic = _keyword_query(question)
-    translated = await _llm_text(
-        QUERY_SYSTEM, question, max_tokens=200
-    )
+    interpreted = question
     pubmed_query = heuristic
-    if translated:
-        candidate = _clean_query(translated[0])
-        if candidate:
-            pubmed_query = candidate
+
+    if client is not None:
+        resolved = await _resolve_question(client, question, history)
+        if resolved:
+            interpreted, pubmed_query = resolved
 
     warning: str | None = None
     articles: list[PubMedArticleDTO] = []
     total = 0
     try:
-        async with PubMedClient() as client:
+        async with PubMedClient() as pubmed:
             # Relevance rather than recency: the best answer to a question is
             # rarely just the newest paper about it.
-            result = await client.esearch(
-                pubmed_query, retmax=limit, sort="relevance"
-            )
+            result = await pubmed.esearch(pubmed_query, retmax=limit, sort="relevance")
             total = result.count
             if not result.pmids and pubmed_query != heuristic:
-                # The model's query was too narrow — fall back to keywords
-                # rather than reporting no evidence.
-                result = await client.esearch(
-                    heuristic, retmax=limit, sort="relevance"
-                )
+                # The model's query was too narrow — fall back to keywords from
+                # the resolved question rather than reporting no evidence.
+                fallback = _keyword_query(interpreted)
+                result = await pubmed.esearch(fallback, retmax=limit, sort="relevance")
                 if result.pmids:
-                    pubmed_query = heuristic
+                    pubmed_query = fallback
                     total = result.count
             if result.pmids:
-                articles = await client.efetch(result.pmids[:limit])
+                articles = await pubmed.efetch(result.pmids[:limit])
     except Exception as exc:
         logger.warning("assistant PubMed search failed: %s", exc)
         warning = getattr(exc, "user_message", None) or (
@@ -279,35 +397,72 @@ async def ask(db: Session, question: str, *, limit: int = 6) -> AssistantAnswer:
 
     sources = _to_sources(db, articles)
 
-    synthesised = False
-    model_id = ""
+    segments: list[AnswerSegment] = []
     answer = ""
-    if sources:
+    model_id = ""
+    synthesised = False
+
+    if sources and client is not None:
+        settings = get_settings()
         t0 = time.perf_counter()
-        result_text = await _llm_text(
-            ANSWER_SYSTEM,
-            _grounding_payload(question, sources),
-            max_tokens=900,
-        )
-        if result_text:
-            answer, model_id = result_text
-            synthesised = True
-            logger.info(
-                "assistant answered in %sms with %s sources",
-                round((time.perf_counter() - t0) * 1000),
-                len(sources),
+        try:
+            response = await client.messages.create(
+                model=settings.assistant_model,
+                # Room for thinking and the answer: max_tokens caps both
+                # together, and thinking is on by default on this model.
+                max_tokens=8000,
+                system=ANSWER_SYSTEM,
+                thinking={"type": "adaptive"},
+                output_config={"effort": settings.assistant_effort},
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            *_document_blocks(sources),
+                            {
+                                "type": "text",
+                                "text": f"Question: {interpreted}",
+                            },
+                        ],
+                    }
+                ],
             )
+        except Exception as exc:
+            logger.warning(
+                "assistant answer call failed: %s: %s", type(exc).__name__, exc
+            )
+        else:
+            if response.stop_reason == "refusal":
+                warning = (
+                    "The model declined to answer this question. Rephrase it, or "
+                    "read the retrieved sources directly."
+                )
+            else:
+                segments = _read_segments(response.content, sources)
+                answer = "".join(segment.text for segment in segments).strip()
+                model_id = response.model
+                synthesised = bool(answer)
+                logger.info(
+                    "assistant answered in %sms from %s sources (%s cited)",
+                    round((time.perf_counter() - t0) * 1000),
+                    len(sources),
+                    sum(1 for s in sources if s.cited),
+                )
+
     if not answer:
         answer = _extractive_answer(sources)
-        if sources and not synthesised:
-            warning = warning or (
+        segments = [AnswerSegment(text=answer)]
+        if sources and not synthesised and not warning:
+            warning = (
                 "Language-model synthesis was unavailable, so the retrieved "
                 "abstracts are shown instead of a written answer."
             )
 
     return AssistantAnswer(
         question=question,
+        interpreted_question=interpreted,
         answer=answer,
+        segments=segments,
         sources=sources,
         pubmed_query=pubmed_query,
         total_matches=total,

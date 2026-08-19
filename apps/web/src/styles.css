@@ -2506,3 +2506,32 @@ pre {
   flex-direction: column;
   gap: 0.8rem;
 }
+
+/* The resolved form of a follow-up. Shown only when it differs from what the
+   reviewer typed, so they can see how their shorthand was read. */
+.chat-interpreted {
+  display: block;
+  margin-top: 0.35rem;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+/* A cited source is the evidence behind the answer; a merely retrieved one is
+   context. The stripe keeps that distinction visible while scanning. */
+.chat-sources li {
+  padding-left: 0.5rem;
+  border-left: 2px solid transparent;
+}
+.chat-sources li.is-cited {
+  border-left-color: var(--ok);
+}
+.chat-source-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.35rem;
+}
+.chat-source-tags .pill {
+  margin-top: 0;
+}
