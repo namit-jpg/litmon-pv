@@ -15,10 +15,15 @@ Two model calls per question, each using the feature that fits it:
 
 1.  Question resolution — a **structured output** call that resolves a follow-up
     against the conversation so far ("and in children?") into a self-contained
-    question, and translates it into a PubMed query. A JSON schema guarantees the
-    shape, so there is no prose to clean up.
+    question, and names the concepts it should search on. The query itself is
+    assembled here from those concepts rather than written by the model, which
+    keeps PubMed's phrase syntax out of a JSON string field.
 2.  Answering — a **citations** call over the retrieved abstracts as document
-    blocks, with adaptive thinking for reasoning across sources that disagree.
+    blocks, with thinking enabled for reasoning across sources that disagree.
+
+Both calls are shaped to the configured model's capabilities: the thinking and
+effort parameters are not interchangeable across model families, and sending
+the wrong pair is a 400 rather than a degraded answer.
 
 When no API key is configured the service still answers, extractively, and says
 so — the degraded mode is visible rather than silent.
@@ -26,6 +31,7 @@ so — the degraded mode is visible rather than silent.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import time
@@ -48,6 +54,10 @@ MAX_ABSTRACT_CHARS = 6000
 #: pronoun or an elliptical follow-up; short enough to stay cheap and to keep an
 #: old topic from dragging a new question back toward it.
 HISTORY_TURNS = 4
+#: Shape of the assembled PubMed query. Two or three concepts is the useful
+#: range: one is too broad to narrow anything, four or more rarely matches.
+MAX_CONCEPT_GROUPS = 4
+MAX_TERMS_PER_GROUP = 8
 
 NOTICE = (
     "Answers are composed only from the PubMed abstracts listed as sources, and "
@@ -78,14 +88,27 @@ Given the conversation so far and their latest message, produce:
 - standalone_question: the latest message rewritten to stand on its own, with \
 pronouns and ellipsis resolved from the conversation. If it already stands \
 alone, return it unchanged.
-- pubmed_query: a PubMed search query for that question. Boolean operators and \
-quoted phrases. Prefer ingredient and MeSH-style vocabulary over brand names. \
-Two or three concepts joined with AND is usually right — broad enough to return \
-results. Never add date filters.
+- concepts: the two or three ideas the search turns on, each as a group of \
+interchangeable terms. Within a group the terms are alternatives — the \
+ingredient and its salts, or a clinical term alongside its MeSH heading and the \
+words a paper's title would actually use. Across groups they are requirements. \
+So {fusidic acid, fusidate} and {hepatotoxicity, liver injury, jaundice, \
+cholestasis} finds papers about either name of the drug together with any of \
+those liver terms. Give each term as plain words: no quote marks, no AND, no OR, \
+no parentheses, no date filters — the query is assembled from the groups.
+
+Two or three groups is right. One group is too broad to be useful; four or more \
+rarely matches anything. Prefer ingredient names over brand names.
 
 Resolve against the conversation, but do not widen the question: if the reviewer \
-narrows to a population or an outcome, the query narrows with it."""
+narrows to a population or an outcome, that becomes a group of its own."""
 
+#: Concept groups rather than a finished query string, because a model writing
+#: PubMed syntax into a JSON string has to escape the quote marks that phrase
+#: searches need — and a schema-constrained decoder reads that quote as the end
+#: of the string. The failure is silent: the query is truncated mid-expression
+#: but the JSON still parses, so a garbage search looks like a successful one.
+#: Terms come back as plain words and `_compose_query` does the quoting.
 RESOLVER_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -93,12 +116,30 @@ RESOLVER_SCHEMA: dict[str, Any] = {
             "type": "string",
             "description": "The latest message, rewritten to stand alone.",
         },
-        "pubmed_query": {
-            "type": "string",
-            "description": "A PubMed query for the standalone question.",
+        "concepts": {
+            "type": "array",
+            "description": (
+                "Two or three concept groups. Terms within a group are "
+                "alternatives; the groups are all required."
+            ),
+            "items": {
+                "type": "object",
+                "properties": {
+                    "terms": {
+                        "type": "array",
+                        "description": (
+                            "Interchangeable plain-text terms. No operators, "
+                            "quote marks or parentheses."
+                        ),
+                        "items": {"type": "string"},
+                    }
+                },
+                "required": ["terms"],
+                "additionalProperties": False,
+            },
         },
     },
-    "required": ["standalone_question", "pubmed_query"],
+    "required": ["standalone_question", "concepts"],
     "additionalProperties": False,
 }
 
@@ -160,6 +201,64 @@ class AssistantAnswer:
     warning: str | None = None
 
 
+#: Model families that take adaptive thinking and the ``effort`` ladder (Claude
+#: 4.6 and later). Anything else — Haiku 4.5 included — takes the older shape:
+#: an explicit thinking budget, and no ``effort`` at all.
+#:
+#: This is a gate rather than a hardcoded parameter set because the mismatch is
+#: a 400, not a weaker answer: Haiku 4.5 rejects both ``thinking.adaptive`` and
+#: ``effort``, while the Opus 5 family rejects ``thinking.enabled``. Confirmed
+#: per model against ``GET /v1/models/{id}`` capabilities.
+ADAPTIVE_TUNING_PREFIXES = (
+    "claude-fable-5",
+    "claude-mythos-5",
+    "claude-opus-5",
+    "claude-opus-4-8",
+    "claude-opus-4-7",
+    "claude-opus-4-6",
+    "claude-sonnet-5",
+    "claude-sonnet-4-6",
+)
+
+#: Thinking budget for the answer call on models without adaptive thinking.
+#: Enough to weigh a handful of abstracts against each other, and well inside
+#: the answer call's ``max_tokens`` — which caps thinking and prose together.
+ANSWER_THINKING_BUDGET = 2000
+
+
+def _tunes_adaptively(model: str) -> bool:
+    return model.startswith(ADAPTIVE_TUNING_PREFIXES)
+
+
+def _resolver_tuning(model: str) -> dict[str, Any]:
+    """Request shaping for the question-resolution call.
+
+    The JSON schema applies to every supported model; only the effort hint is
+    family-specific. Resolving a reference is not hard reasoning, so where the
+    ladder exists we spend as little as possible and leave the budget for the
+    answer.
+    """
+    output_config: dict[str, Any] = {
+        "format": {"type": "json_schema", "schema": RESOLVER_SCHEMA}
+    }
+    if _tunes_adaptively(model):
+        output_config["effort"] = "low"
+    return {"output_config": output_config}
+
+
+def _answer_tuning(model: str, effort: str) -> dict[str, Any]:
+    """Request shaping for the citations answer call."""
+    if _tunes_adaptively(model):
+        return {
+            "thinking": {"type": "adaptive"},
+            "output_config": {"effort": effort},
+        }
+    # Older families: budgeted thinking, and `effort` would be rejected.
+    return {
+        "thinking": {"type": "enabled", "budget_tokens": ANSWER_THINKING_BUDGET}
+    }
+
+
 def _client() -> anthropic.AsyncAnthropic | None:
     """The Anthropic client, or None when the assistant is unconfigured."""
     settings = get_settings()
@@ -168,6 +267,54 @@ def _client() -> anthropic.AsyncAnthropic | None:
     return anthropic.AsyncAnthropic(
         api_key=settings.llm_api_key, timeout=REQUEST_TIMEOUT_SECONDS
     )
+
+
+def _quote_term(term: str) -> str:
+    """Quote a search term for PubMed, keeping any field tag outside the quotes.
+
+    ``liver injury`` becomes a phrase search; ``Drug Resistance,
+    Bacterial[MeSH]`` has to be quoted *inside* the tag
+    (``"Drug Resistance, Bacterial"[MeSH]``) or PubMed reads the comma as a
+    separate term. Single words are left bare — quoting them would suppress
+    PubMed's automatic term mapping to MeSH and lose relevant papers.
+    """
+    if term.endswith("]") and "[" in term:
+        head, _, tag = term.rpartition("[")
+        head = head.strip()
+        return f'"{head}"[{tag}' if " " in head else f"{head}[{tag}"
+    return f'"{term}"' if " " in term else term
+
+
+def _compose_query(concepts: list[dict[str, Any]]) -> str:
+    """Assemble a PubMed query from the resolver's concept groups.
+
+    Groups become parenthesised OR alternatives joined by AND. Quoting happens
+    here rather than in the model's output: a multi-word term is a phrase search
+    and needs quote marks, which is exactly the character the model cannot emit
+    safely inside a JSON string. A term already carrying a field tag
+    (``liver[MeSH]``) is passed through untouched.
+    """
+    groups: list[str] = []
+    # Bounds are enforced here, not in the schema: structured-output schemas
+    # reject minItems/maxItems on arrays, so the caps are ours to apply.
+    for concept in concepts[:MAX_CONCEPT_GROUPS]:
+        terms: list[str] = []
+        seen: set[str] = set()
+        for raw in (concept.get("terms") or [])[:MAX_TERMS_PER_GROUP]:
+            # Strip any operator syntax the model added despite instructions —
+            # it would otherwise nest inside our own parentheses.
+            term = str(raw).replace('"', " ").replace("(", " ").replace(")", " ")
+            term = " ".join(term.split())
+            if not term or term.upper() in {"AND", "OR", "NOT"}:
+                continue
+            key = term.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            terms.append(_quote_term(term))
+        if terms:
+            groups.append(terms[0] if len(terms) == 1 else "(" + " OR ".join(terms) + ")")
+    return " AND ".join(groups)
 
 
 def _keyword_query(question: str) -> str:
@@ -215,18 +362,17 @@ async def _resolve_question(
             max_tokens=2000,
             system=RESOLVER_SYSTEM,
             messages=turns,
-            output_config={
-                "format": {"type": "json_schema", "schema": RESOLVER_SCHEMA},
-                # Resolving a reference is not hard reasoning; spend the tokens
-                # on the answer instead.
-                "effort": "low",
-            },
+            **_resolver_tuning(settings.assistant_model),
         )
     except Exception as exc:
         logger.warning("assistant resolver failed: %s: %s", type(exc).__name__, exc)
         return None
 
-    import json
+    # A truncated reply can still be parseable, so treat the cutoff itself as
+    # the failure rather than trusting whatever survived it.
+    if response.stop_reason == "max_tokens":
+        logger.warning("assistant resolver hit max_tokens; falling back")
+        return None
 
     text = next((b.text for b in response.content if b.type == "text"), "")
     try:
@@ -235,7 +381,10 @@ async def _resolve_question(
         logger.warning("assistant resolver returned non-JSON")
         return None
     standalone = str(data.get("standalone_question") or "").strip()
-    query = str(data.get("pubmed_query") or "").strip()
+    concepts = data.get("concepts")
+    if not isinstance(concepts, list):
+        return None
+    query = _compose_query(concepts)
     return (standalone or question, query) if query else None
 
 
@@ -409,11 +558,12 @@ async def ask(
             response = await client.messages.create(
                 model=settings.assistant_model,
                 # Room for thinking and the answer: max_tokens caps both
-                # together, and thinking is on by default on this model.
+                # together.
                 max_tokens=8000,
                 system=ANSWER_SYSTEM,
-                thinking={"type": "adaptive"},
-                output_config={"effort": settings.assistant_effort},
+                **_answer_tuning(
+                    settings.assistant_model, settings.assistant_effort
+                ),
                 messages=[
                     {
                         "role": "user",

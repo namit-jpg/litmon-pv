@@ -35,12 +35,15 @@ class Settings(BaseSettings):
     llm_model: str = "grok-2-latest"
     llm_mock: bool = True
 
-    # The assistant answers a handful of questions a day, where answer quality
-    # is what matters; screening runs over every article ingested, where cost
-    # and throughput do. They deliberately do not share a model.
-    assistant_model: str = "claude-opus-5"
-    # Thinking depth for the assistant. `high` is the API default; `low` and
-    # `medium` are the cost levers if question volume grows.
+    # The assistant and the screener deliberately do not share a model: the
+    # assistant answers a handful of questions a day, the screener runs over
+    # every article ingested. Both models must support citations and structured
+    # outputs, which is what keeps an answer checkable against its sources.
+    assistant_model: str = "claude-haiku-4-5"
+    # Thinking depth for the assistant, on model families that expose the
+    # effort ladder. Ignored on families that do not (Haiku 4.5 has no `effort`
+    # parameter — it uses a fixed thinking budget instead), so raising it there
+    # has no effect rather than being an error.
     assistant_effort: str = "high"
 
     # NLM RxNorm drug catalogue (free, no API key). Mirrored locally so the
