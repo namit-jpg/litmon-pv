@@ -18,6 +18,7 @@ import OpsPage from "./pages/OpsPage";
 import SearchRunPage from "./pages/SearchRunPage";
 import DashboardPage from "./pages/DashboardPage";
 import AlertsPage from "./pages/AlertsPage";
+import ChatPage from "./pages/ChatPage";
 import SubmissionPage from "./pages/SubmissionPage";
 import ProductsPage from "./pages/ProductsPage";
 import SourcesPage from "./pages/SourcesPage";
@@ -178,6 +179,7 @@ function Rail({ role }: { role?: string }) {
       {link("/dashboard", "Dashboard")}
       {link("/", "My workspace", counts.work, counts.work > 0)}
       {link("/alerts", "Alerts", counts.alerts, counts.alerts > 0)}
+      {link("/chat", "Chat")}
       {link("/archive", "Archive")}
 
       <div className="rail-group">Regulatory</div>
@@ -254,6 +256,7 @@ export default function App() {
       <Route path="/" element={<Private><WorkspacePage /></Private>} />
       <Route path="/dashboard" element={<Private><DashboardPage /></Private>} />
       <Route path="/alerts" element={<Private><AlertsPage /></Private>} />
+      <Route path="/chat" element={<Private><ChatPage /></Private>} />
       <Route path="/archive" element={<Private><ArchivePage /></Private>} />
       <Route path="/articles/:id" element={<Private><DetectionReportPage /></Private>} />
 

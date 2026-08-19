@@ -379,6 +379,31 @@ export type ExportPackage = {
   created_at: string;
 };
 
+/** A paper cited by an assistant answer. `article_id` is present when the paper
+ *  is already a monitored article, so the citation can link to its report. */
+export type AssistantSource = {
+  number: number;
+  pmid: string;
+  title: string;
+  journal?: string | null;
+  pub_date?: string | null;
+  url: string;
+  article_id?: number | null;
+};
+
+export type AssistantAnswer = {
+  question: string;
+  answer: string;
+  sources: AssistantSource[];
+  pubmed_query: string;
+  total_matches: number;
+  model_id: string;
+  /** False when the answer is retrieved abstracts rather than synthesis. */
+  synthesised: boolean;
+  notice: string;
+  warning?: string | null;
+};
+
 export type AuditEvent = {
   id: number;
   actor: string;
@@ -1033,6 +1058,11 @@ export const api = {
     request<Record<string, unknown>[]>(
       `/api/jobs${status ? `?status=${status}` : ""}`
     ),
+  assistantAsk: (question: string, limit?: number) =>
+    request<AssistantAnswer>("/api/assistant/ask", {
+      method: "POST",
+      body: JSON.stringify({ question, ...(limit ? { limit } : {}) }),
+    }),
   batchRescore: (body: { article_ids?: number[]; all_open?: boolean }) =>
     request<Record<string, unknown>>("/api/jobs/batch-rescore", {
       method: "POST",

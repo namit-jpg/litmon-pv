@@ -147,6 +147,7 @@ class PubMedClient:
         date_from: date | None = None,
         date_to: date | None = None,
         retmax: int = 10000,
+        sort: str = "pub_date",
     ) -> ESearchResult:
         query = term.strip()
         if date_from and date_to:
@@ -164,7 +165,9 @@ class PubMedClient:
                 "term": query,
                 "retmax": str(retmax),
                 "retmode": "json",
-                "sort": "pub_date",
+                # Monitoring wants newest first; question answering wants the
+                # most on-topic papers, so the caller chooses.
+                "sort": sort,
             },
         )
         try:

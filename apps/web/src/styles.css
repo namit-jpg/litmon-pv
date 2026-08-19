@@ -2260,3 +2260,249 @@ pre {
 .extract-wide {
   grid-column: 1 / -1;
 }
+
+/* ══════════════════════════════════════════════════════════════════════
+   Literature assistant.
+
+   A reading surface rather than a messaging one: the answer is the artefact
+   and the citations under it are load-bearing, so the sources get the same
+   typographic care as the prose instead of being a collapsed footnote.
+   ══════════════════════════════════════════════════════════════════════ */
+
+.chat {
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+}
+
+.chat-empty {
+  padding: 2rem 1.5rem;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  align-items: flex-start;
+}
+
+.chat-examples {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.chat-example {
+  padding: 0.45rem 0.75rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--panel-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.85rem;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+.chat-example:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-hover);
+}
+.chat-example:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.chat-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+}
+
+.chat-turn {
+  padding: 1.15rem 1.3rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.chat-question {
+  padding-bottom: 0.85rem;
+  border-bottom: 1px solid var(--border);
+}
+.chat-question p {
+  margin: 0.2rem 0 0;
+  font-family: var(--font-serif);
+  font-size: 1.15rem;
+  line-height: 1.35;
+  color: var(--text-strong);
+  text-wrap: balance;
+}
+
+.chat-thinking {
+  font-style: italic;
+}
+
+/* Answer prose. Held near 70 characters so it reads as a written answer
+   rather than a wall spanning the whole canvas. */
+.chat-answer {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  max-width: 72ch;
+}
+.chat-answer p {
+  margin: 0;
+  line-height: 1.65;
+}
+
+/* Inline citation. Superscript so it never breaks the line rhythm. */
+.cite {
+  display: inline-block;
+  min-width: 1.1em;
+  margin: 0 0.05em;
+  padding: 0 0.2em;
+  border-radius: 3px;
+  background: var(--accent-soft);
+  color: var(--accent-hover);
+  font-family: var(--font-mono);
+  font-size: 0.68em;
+  font-weight: 600;
+  line-height: 1.5;
+  text-align: center;
+  vertical-align: super;
+  text-decoration: none;
+}
+.cite:hover {
+  background: var(--accent);
+  color: var(--on-accent);
+  text-decoration: none;
+}
+
+.chat-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.chat-query summary {
+  cursor: pointer;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+.chat-query summary:hover {
+  color: var(--accent);
+}
+.chat-query[open] summary {
+  margin-bottom: 0.5rem;
+}
+
+.chat-sources {
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--border);
+}
+.chat-sources ol {
+  margin: 0.5rem 0 0;
+  padding-left: 1.4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+.chat-sources li {
+  font-size: 0.9rem;
+  /* The citation anchor scrolls here, so keep it clear of the sticky topbar. */
+  scroll-margin-top: 5rem;
+}
+.chat-sources li > a {
+  font-weight: 550;
+}
+.chat-sources .src {
+  display: block;
+  margin-top: 0.15rem;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+.chat-sources .pill {
+  margin-top: 0.35rem;
+}
+
+.chat-composer {
+  position: sticky;
+  bottom: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--panel);
+  box-shadow: var(--shadow-md);
+}
+.chat-composer textarea {
+  margin: 0;
+  resize: vertical;
+  font-size: 0.95rem;
+}
+.chat-composer-actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+/* Semantic pill variants used by the assistant's answer metadata. `.ok` already
+   exists; these complete the set so a pill can carry state anywhere. */
+.pill.acc {
+  background: var(--accent-soft);
+  border-color: var(--water-line);
+  color: var(--accent-hover);
+}
+.pill.warn {
+  background: var(--warn-soft);
+  border-color: var(--warn-line);
+  color: var(--warn-ink);
+}
+.pill.crit {
+  background: var(--danger-soft);
+  border-color: var(--danger-line);
+  color: var(--danger-ink);
+}
+.pill.mono {
+  font-family: var(--font-mono);
+  font-weight: 500;
+}
+
+/* Manual product entry. Collapsed by default: the catalogue picker is the
+   normal path, and this is the exception for products it cannot reach. */
+.manual-product summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.6rem;
+  cursor: pointer;
+  font-family: var(--font-serif);
+  font-size: 1.05rem;
+  color: var(--text-strong);
+}
+.manual-product summary .muted {
+  font-family: var(--font-sans);
+  font-size: 0.8rem;
+}
+.manual-product summary:hover {
+  color: var(--accent);
+}
+.manual-product[open] summary {
+  padding-bottom: 0.9rem;
+  margin-bottom: 0.9rem;
+  border-bottom: 1px solid var(--border);
+}
+.manual-product-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}

@@ -627,3 +627,38 @@ class RegulatoryRecordOut(BaseModel):
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+# ── Literature assistant ─────────────────────────────────────────────
+
+
+class AssistantAskIn(BaseModel):
+    question: str = Field(min_length=3, max_length=1000)
+    # How many papers to ground the answer in. Kept small: more sources means a
+    # longer wait and a vaguer answer, not a better one.
+    limit: int = Field(default=6, ge=1, le=12)
+
+
+class AssistantSourceOut(BaseModel):
+    number: int
+    pmid: str
+    title: str
+    journal: Optional[str]
+    pub_date: Optional[str]
+    url: str
+    #: Set when this paper is already a monitored article, so the client can
+    #: link to its detection report instead of sending the reviewer to PubMed.
+    article_id: Optional[int]
+
+
+class AssistantAnswerOut(BaseModel):
+    question: str
+    answer: str
+    sources: list[AssistantSourceOut]
+    pubmed_query: str
+    total_matches: int
+    model_id: str
+    #: False when the answer is the extractive fallback rather than synthesis.
+    synthesised: bool
+    notice: str
+    warning: Optional[str] = None

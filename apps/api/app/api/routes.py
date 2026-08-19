@@ -55,6 +55,8 @@ from app.models.entities import (
     product_active_ingredients,
 )
 from app.schemas.api import (
+    AssistantAnswerOut,
+    AssistantAskIn,
     ActiveIngredientIn,
     ActiveIngredientOut,
     ActiveIngredientUpdate,
@@ -104,6 +106,7 @@ from app.schemas.api import (
     TokenOut,
     UserOut,
 )
+from app.services.assistant import ask as assistant_ask
 from app.services.audit import log_event
 from app.services.alerts import create_alert, mark_alert_read
 from app.services.drug_catalog import (
@@ -427,6 +430,13 @@ async def create_product(
         # which empties the reviewer's substance column and drops
         # activesubstancename from the E2B export.
         derived = await derive_ingredient_names(body.rxcui, product.name, body.tty)
+        if not derived and product.inn:
+            # A product entered by hand has no RxNorm concept to derive from, so
+            # nothing came back. The substance the operator typed is the best
+            # available answer, and without it the product carries no API tag at
+            # all — which empties the reviewer's substance column and drops
+            # activesubstancename from the E2B export.
+            derived = [product.inn]
         if derived:
             product.active_ingredients = get_or_create_ingredients(db, derived)
             if not product.inn:
@@ -2889,6 +2899,67 @@ def list_regulatory_versions(
         if (package.payload_json or {}).get("regulatory", {}).get("article_id")
         == article_id
     ]
+
+
+# ── Literature assistant (natural-language questions) ─────────────────
+
+
+@router.post("/assistant/ask", response_model=AssistantAnswerOut)
+async def assistant_ask_question(
+    body: AssistantAskIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict:
+    """Answer a free-text medical question from PubMed, with citations.
+
+    Read-only by design: it never touches a case record. The question and the
+    query it was translated into are written to the audit trail, because an
+    inspector asking "what was this system used to look up" deserves an answer.
+    """
+    try:
+        result = await assistant_ask(db, body.question, limit=body.limit)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    log_event(
+        db,
+        actor=user.email,
+        action="assistant_question_asked",
+        entity_type="assistant",
+        entity_id="0",
+        payload={
+            "question": result.question,
+            "pubmed_query": result.pubmed_query,
+            "source_pmids": [s.pmid for s in result.sources],
+            "total_matches": result.total_matches,
+            "synthesised": result.synthesised,
+            "model_id": result.model_id,
+        },
+    )
+    db.commit()
+
+    return {
+        "question": result.question,
+        "answer": result.answer,
+        "sources": [
+            {
+                "number": s.number,
+                "pmid": s.pmid,
+                "title": s.title,
+                "journal": s.journal,
+                "pub_date": s.pub_date,
+                "url": s.url,
+                "article_id": s.article_id,
+            }
+            for s in result.sources
+        ],
+        "pubmed_query": result.pubmed_query,
+        "total_matches": result.total_matches,
+        "model_id": result.model_id,
+        "synthesised": result.synthesised,
+        "notice": result.notice,
+        "warning": result.warning,
+    }
 
 
 # ── Export ────────────────────────────────────────────────────────────
