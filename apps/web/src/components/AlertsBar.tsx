@@ -21,6 +21,8 @@ export default function AlertsBar() {
   }, []);
 
   const unread = items.filter((item) => !item.read_at).length;
+  const high = items.filter((item) => item.priority === "high").length;
+  const normal = items.length - high;
 
   async function markRead(item: AlertItem) {
     if (!item.read_at) await api.readAlert(item.id);
@@ -57,16 +59,29 @@ export default function AlertsBar() {
               </button>
             )}
           </div>
+          {/* The same priority breakdown the inbox shows, so the split is
+              legible before the panel is scrolled. Read-only here: the filters
+              that would act on it live on the inbox page. */}
+          {items.length > 0 && (
+            <div className="tally alerts-tally">
+              <span className={`pill ${high > 0 ? "crit" : ""}`.trim()}>{high} high</span>
+              <span className="pill">{normal} normal</span>
+            </div>
+          )}
           {items.length === 0 ? (
             <p className="muted alerts-empty">No alerts yet.</p>
           ) : (
             <div className="alerts-list">
               {items.slice(0, 12).map((item) => {
                 const body = (
-                  <div className={`alert-item ${item.read_at ? "read" : "unread"}`}>
+                  <div
+                    className={`alert-item ${item.priority === "high" ? "crit" : ""} ${
+                      item.read_at ? "read" : "unread"
+                    }`}
+                  >
                     <div className="alert-item-head">
                       <strong>{item.title}</strong>
-                      <span className={`pill ${item.priority === "high" ? "danger" : ""}`}>
+                      <span className={`pill ${item.priority === "high" ? "crit" : ""}`.trim()}>
                         {item.priority}
                       </span>
                     </div>

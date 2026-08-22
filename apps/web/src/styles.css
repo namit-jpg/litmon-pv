@@ -495,6 +495,24 @@ a:hover {
   font-weight: 600;
 }
 
+/* Count riding inside a tab. It has to read against both the panel and the
+   filled active tab, so it borrows the tab's own colour rather than declaring
+   one, and leans on a translucent ground for contrast in either state. */
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.tab-count {
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 14%, transparent);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
 .table {
   width: 100%;
   border-collapse: collapse;
@@ -527,6 +545,28 @@ a:hover {
 }
 .table tr:last-child td {
   border-bottom: none;
+}
+
+/* Secondary line beneath a cell's title — a PMID, a source kind, a failure
+   reason. The class is used on five pages and was never defined, which is why
+   those lines have been running on from the title they belong under instead of
+   sitting below it. */
+.t-sub {
+  display: block;
+  margin-top: 0.2rem;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 400;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+/* A table whose first column is a title and whose remaining columns are short
+   facts. Auto layout hands width to whichever column holds the longest word,
+   which starves the title; this claims its share explicitly. */
+.table.title-led th:first-child,
+.table.title-led td:first-child {
+  width: 34%;
 }
 
 .pill {
@@ -706,6 +746,20 @@ label {
   margin-bottom: 0.75rem;
   font-size: 0.88rem;
   color: var(--text);
+}
+/* A checkbox in a row of actions is one control, so its box belongs beside its
+   text. Restated for the same reason `.checklist label` documents above: the
+   cascade resolves per property, so flex-direction does not inherit its way out
+   of the stacked default. */
+.row-actions label {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0;
+}
+.row-actions label input[type="checkbox"] {
+  width: auto;
+  margin: 0;
 }
 input,
 textarea,
@@ -970,6 +1024,16 @@ pre {
   background: var(--accent-soft);
   border-left: 3px solid var(--accent);
 }
+/* Severity edge on the dropdown rows, matching the inbox stripe. A left border
+   rather than the inbox's `.sev` element, because these rows sit inside a link
+   and a narrow panel where a spare grid column would cost more than it says. */
+.alert-item.crit {
+  border-left: 3px solid var(--danger);
+}
+.alerts-tally {
+  padding: 0.5rem 0.9rem;
+  border-bottom: 1px solid var(--border);
+}
 .alert-item.read {
   opacity: 0.7;
 }
@@ -1019,6 +1083,74 @@ pre {
   font-variant-numeric: tabular-nums;
   color: var(--text-strong);
   line-height: 1.15;
+}
+
+/* Tone bands for the dashboard tiles. The band follows what the measure means
+   rather than how large it is — see `metricTone` in DashboardPage — so the
+   same three colours carry the same promise everywhere they appear: clay is a
+   commitment already missed, honey is work still owed, fern is a queue
+   standing empty. Volume measures take no band at all, which is what keeps the
+   coloured tiles worth looking at.
+
+   The number carries the colour and the card keeps a tinted edge, so the tone
+   survives being scanned rather than read. Colour is never the only signal:
+   every tile still states its own label and count. */
+.dashboard-card.crit {
+  border-color: var(--danger-line);
+  background: linear-gradient(var(--danger-soft), var(--panel) 62%);
+}
+.dashboard-card.crit strong {
+  color: var(--danger-ink);
+}
+.dashboard-card.warn {
+  border-color: var(--warn-line);
+  background: linear-gradient(var(--warn-soft), var(--panel) 62%);
+}
+.dashboard-card.warn strong {
+  color: var(--warn-ink);
+}
+.dashboard-card.ok {
+  border-color: var(--ok-line);
+  background: linear-gradient(var(--ok-soft), var(--panel) 62%);
+}
+.dashboard-card.ok strong {
+  color: var(--ok-ink);
+}
+
+/* Legend for those bands. Without it the colours are decoration; with it the
+   grid can be read without hovering a single tile. */
+.tone-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.9rem;
+  margin-bottom: 0.75rem;
+  font-size: 0.74rem;
+  color: var(--muted);
+}
+.tone-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.tone-key::before {
+  content: "";
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 2px;
+  border: 1px solid var(--border-strong);
+  background: var(--panel-3);
+}
+.tone-key.crit::before {
+  background: var(--danger);
+  border-color: var(--danger);
+}
+.tone-key.warn::before {
+  background: var(--warn);
+  border-color: var(--warn);
+}
+.tone-key.ok::before {
+  background: var(--ok);
+  border-color: var(--ok);
 }
 
 .product-bars,
@@ -1854,6 +1986,117 @@ pre {
   font-family: var(--font-mono);
   font-size: 0.66rem;
   color: var(--muted);
+}
+
+/* The inbox list itself. `.alert-i` already draws its own bottom rule, so the
+   list only has to undo the card's padding and let the rows run edge to edge —
+   otherwise each severity stripe floats in a gutter instead of marking the row
+   it belongs to. */
+.alert-list {
+  margin: 0 -1.3rem -1.15rem;
+  border-top: 1px solid var(--border);
+}
+.alert-list .alert-i:last-child {
+  border-bottom: none;
+}
+.alert-i h4 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+}
+.alert-i .row-actions {
+  align-self: center;
+}
+
+/* Label-over-value facts. Used where a record has to be *read* rather than
+   edited — a filed gateway reference, the case a report belongs to — so it
+   auto-fits instead of forcing a column count onto a variable field list. */
+.fact-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.85rem 1.2rem;
+}
+.fact-grid > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+.fact-grid span {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+.fact-grid strong {
+  font-size: 0.92rem;
+  color: var(--text-strong);
+  overflow-wrap: anywhere;
+}
+
+/* Blocking validation errors. They stop a regulatory package being generated,
+   so they should not read as a bulleted aside. */
+.error-list {
+  margin: 0.75rem 0 0;
+  padding: 0.6rem 0.9rem 0.6rem 1.9rem;
+  border: 1px solid var(--danger-line);
+  border-radius: var(--radius-sm);
+  background: var(--danger-soft);
+  color: var(--danger-ink);
+  font-size: 0.85rem;
+}
+.error-list li + li {
+  margin-top: 0.3rem;
+}
+
+/* A card header that carries a readout beside its title. */
+.card-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.8rem;
+}
+.card-head h2 {
+  margin: 0;
+}
+
+/* Breakdown chips. Where one is a button it also applies its own filter, so
+   the count and the way to act on it are one control rather than two. */
+.tally {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+.tally-pill {
+  display: inline-block;
+  padding: 0.16rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.74rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+.tally-pill:hover {
+  border-color: var(--border-strong);
+}
+.tally-pill.crit {
+  background: var(--danger-soft);
+  border-color: var(--danger-line);
+  color: var(--danger-ink);
+}
+/* The pressed state has to survive both tones, so it reads as a ring rather
+   than a colour of its own. */
+.tally-pill.on {
+  border-color: var(--text-strong);
+  box-shadow: inset 0 0 0 1px var(--text-strong);
 }
 
 /* ── banners ──────────────────────────────────────────────────────── */

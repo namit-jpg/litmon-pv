@@ -2,24 +2,48 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { AlertItem, api, humanise, Product } from "../api";
 
+/**
+ * Alert severity, in the same colour language the dashboard uses. The backend
+ * only ever raises `high` or `normal` (see `services/triggers.py`), so this is
+ * one band and a default rather than a ladder.
+ *
+ * `normal` deliberately takes no tone. The obvious alternative — the accent
+ * colour — is fern green in the light theme, and green already means "clear" on
+ * the dashboard; painting an unread alert with it would say the opposite of
+ * what the row is for. Grey says "normal priority", which is the fact.
+ */
+function priorityTone(priority: string): string {
+  return priority === "high" ? "crit" : "";
+}
+
 export default function AlertsPage() {
   const [params, setParams] = useSearchParams();
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
+  // The tally is counted over the same filters as the list *except* priority,
+  // so the counts stay stable while a priority filter is on. Counting the
+  // filtered list instead would report "0 normal" the moment you clicked
+  // "high", turning the tally into a control that disables itself.
+  const [tallyPool, setTallyPool] = useState<AlertItem[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [error, setError] = useState("");
   const unreadOnly = params.get("unread") !== "false";
 
   const load = useCallback(async () => {
     setError("");
+    const shared = {
+      unread_only: unreadOnly,
+      product_id: Number(params.get("product_id")) || undefined,
+      alert_type: params.get("type") || undefined,
+      created_from: params.get("from") ? `${params.get("from")}T00:00:00Z` : undefined,
+      created_to: params.get("to") ? `${params.get("to")}T23:59:59Z` : undefined,
+    };
     try {
-      setAlerts(await api.alerts({
-        unread_only: unreadOnly,
-        priority: params.get("priority") || undefined,
-        product_id: Number(params.get("product_id")) || undefined,
-        alert_type: params.get("type") || undefined,
-        created_from: params.get("from") ? `${params.get("from")}T00:00:00Z` : undefined,
-        created_to: params.get("to") ? `${params.get("to")}T23:59:59Z` : undefined,
-      }));
+      const [listed, pool] = await Promise.all([
+        api.alerts({ ...shared, priority: params.get("priority") || undefined }),
+        api.alerts(shared),
+      ]);
+      setAlerts(listed);
+      setTallyPool(pool);
     } catch (caught) {
       setError(String(caught));
     }
@@ -48,6 +72,11 @@ export default function AlertsPage() {
       setError(String(caught));
     }
   }
+
+  const activePriority = params.get("priority") || "";
+  const highCount = tallyPool.filter((alert) => alert.priority === "high").length;
+  const normalCount = tallyPool.length - highCount;
+  const unreadCount = tallyPool.filter((alert) => !alert.read_at).length;
 
   return (
     <div>
@@ -100,27 +129,67 @@ export default function AlertsPage() {
 
       {error ? <div className="error">{error}</div> : null}
       <section className="card">
+        {/* The priority tally. Each count is also the filter for its own band,
+            so the breakdown and the way to act on it are the same control. */}
+        <div className="card-head">
+          <h2>Inbox</h2>
+          <div className="tally">
+            <button
+              type="button"
+              className={`tally-pill crit ${activePriority === "high" ? "on" : ""}`.trim()}
+              aria-pressed={activePriority === "high"}
+              onClick={() => setFilter("priority", activePriority === "high" ? undefined : "high")}
+            >
+              {highCount} high
+            </button>
+            <button
+              type="button"
+              className={`tally-pill ${activePriority === "normal" ? "on" : ""}`.trim()}
+              aria-pressed={activePriority === "normal"}
+              onClick={() => setFilter("priority", activePriority === "normal" ? undefined : "normal")}
+            >
+              {normalCount} normal
+            </button>
+            <span className="pill">{unreadCount} unread</span>
+          </div>
+        </div>
         {alerts.length === 0 ? <p className="muted">No alerts under the current filters.</p> : (
-          <ul className="timeline alert-list">
+          <div className="alert-list">
             {alerts.map((alert) => (
-              <li key={alert.id}>
-                <div className="page-head compact">
-                  <div>
-                    <div className="row-actions wrap">
-                      <span className={`pill ${alert.priority === "high" ? "danger" : ""}`}>{humanise(alert.priority)}</span>
-                      <strong>{alert.title}</strong>
-                    </div>
-                    <p>{alert.message}</p>
-                    <span className="muted">{humanise(alert.alert_type)} · {new Date(alert.created_at).toLocaleString()}</span>
-                  </div>
-                  <div className="row-actions no-print">
-                    {alert.article_id ? <Link className="btn ghost" to={`/articles/${alert.article_id}`}>Open report</Link> : null}
-                    {!alert.read_at ? <button className="btn" onClick={() => markRead(alert.id)}>Mark read</button> : null}
-                  </div>
+              <div
+                key={alert.id}
+                className={`alert-i ${priorityTone(alert.priority)} ${alert.read_at ? "" : "unread"}`.trim()}
+              >
+                {/* The stripe is the fast read; the pill beside the title
+                    repeats it in words, so priority never depends on colour
+                    alone. */}
+                <span className="sev" />
+                <div>
+                  <h4>
+                    {alert.title}
+                    <span className={`pill ${alert.priority === "high" ? "crit" : ""}`.trim()}>
+                      {humanise(alert.priority)}
+                    </span>
+                  </h4>
+                  <p>{alert.message}</p>
+                  <p className="meta">
+                    {[
+                      humanise(alert.alert_type),
+                      new Date(alert.created_at).toLocaleString(),
+                      alert.channels?.length ? alert.channels.join(" + ") : null,
+                      alert.read_at ? "read" : "unread",
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </p>
                 </div>
-              </li>
+                <div className="row-actions no-print">
+                  {alert.article_id ? <Link className="btn ghost" to={`/articles/${alert.article_id}`}>Open report</Link> : null}
+                  {!alert.read_at ? <button className="btn" onClick={() => markRead(alert.id)}>Mark read</button> : null}
+                </div>
+              </div>
             ))}
-          </ul>
+          </div>
         )}
       </section>
     </div>
